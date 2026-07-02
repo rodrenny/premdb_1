@@ -5,8 +5,9 @@
 // (or `supabase gen types typescript --project-id <ref> > types/supabase.ts`
 // for remote projects).
 //
-// This hand-written version mirrors `supabase/migrations/001_initial.sql`
-// so the app is type-safe before you first run the generator.
+// This hand-written version mirrors the full migration chain in
+// `supabase/migrations/` (001 through 010) so the app is type-safe before
+// you first run the generator.
 
 export type Json =
   | string

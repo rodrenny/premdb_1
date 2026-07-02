@@ -3,8 +3,10 @@
 Predict the eventual IMDb rating of unreleased movies, and score points when
 they settle.
 
-This is the **tightened v8** MVP build (balanced, operator-safe). See
-`PreMDB_tightened_v8_prompt.md` for the full product spec.
+This is the **v9** build: the tightened v8 MVP plus security hardening
+(RPC authorization, RLS fixes, settlement guards) and product upgrades
+(community consensus, daily rating snapshots, snapshot-driven
+auto-settlement, pre-settlement countdown).
 
 ---
 
@@ -14,8 +16,13 @@ This is the **tightened v8** MVP build (balanced, operator-safe). See
   to one decimal place.
 - When a movie settles (at least 28 days past release), points are awarded and
   the leaderboard updates.
-- Admins can still settle manually, but cron can auto-settle day-28+ movies
-  when TMDb snapshot data is present.
+- The daily cron records a rating snapshot per movie in the settlement window
+  (`rating_snapshots`) and auto-settles each day-28+ movie from the **first
+  snapshot taken on or after day 28** — the displayed rule, literally.
+- Admins can settle manually at any time; manual settlement remains the
+  override path for any movie regardless of snapshot state.
+- Once predictions lock, the movie page reveals the community consensus
+  (median + histogram) — never before lock.
 
 ---
 
@@ -25,8 +32,19 @@ This is the **tightened v8** MVP build (balanced, operator-safe). See
 - Predictions allowed only while `prediction_locks_at > now()`. "Locked" is
   derived from time — it is **not** a persisted movie status.
 - A movie becomes settlement-eligible once **28 days** have passed since the
-  chosen release date.
-- The official result is the first daily IMDb snapshot on or after day 28.
+  chosen release date (`SETTLEMENT_WINDOW_DAYS` in
+  `lib/settlement/eligibility.ts`; the `settle_movie` RPC hardcodes the same
+  28 — keep them in sync).
+- The official result is the first daily rating snapshot on or after day 28.
+  v1 snapshots come from **TMDb as a stated proxy for IMDb**;
+  `settlements.source_type` / `source_snapshot` record this provenance.
+- Settlement guards (DB constraints): `official_rating` must be 1.0–10.0 and
+  `settlement_snapshot_date >= eligible_from_date`. `eligible_from_date` is
+  computed inside the RPC from `release_date_used + 28` — never trusted from
+  the caller.
+- Community consensus (median, mean, 0.5-bucket histogram) is revealed only
+  after predictions lock, and only with **3 or more** predictions. Both gates
+  are enforced inside the SQL functions (see "Community consensus" below).
 - Movie statuses: `upcoming`, `released_waiting_window`, `awaiting_review`,
   `settled`, `canceled`.
 
@@ -95,25 +113,37 @@ app/                    — routes (flat, no route groups)
     cron/check-movie-lifecycle/   Vercel Cron endpoint
 
 components/             UI: ui/ layout/ movies/ predictions/ dashboard/ admin/ leaderboard/ auth/
+  movies/consensus-panel.tsx       post-lock community consensus card
+  movies/settlement-countdown.tsx  snapshot + "settles in N days" card
 lib/
   supabase/             server, client, middleware helpers (@supabase/ssr)
   auth/                 admin.ts + server actions
   validations/          all Zod schemas
   scoring/              pure scoring math (unit tested)
-  settlement/           pure eligibility + settlement service
-  leaderboard/          server-side aggregation
+  settlement/           pure eligibility + settlement service + cron phases (auto.ts)
+  leaderboard/          server-side aggregation (aggregate.ts is pure/testable)
   movies/               display-state derivation + TMDb URL helpers
-  predictions/          server actions
+  predictions/          server actions + delete service + consensus math
   tmdb/                 client + sync
   admin/                server actions
 supabase/
-  migrations/
-    001_initial.sql     schema + RLS + profile auto-create trigger
-    002_settlement_rpc.sql   atomic settle_movie(...)
+  migrations/           forward-only — never edit an existing file here
+    001_initial.sql               schema + RLS + profile auto-create trigger
+    002_settlement_rpc.sql        atomic settle_movie(...)
+    003_contract_day28.sql        day-28 contract status constraint
+    004_auto_settlement_snapshots.sql  (deprecated) movies.tmdb_*_snapshot columns
+    005_settle_movie_authz.sql    in-function admin/service-role check + grants
+    006_score_events_public_read.sql   public leaderboard reads
+    007_settlement_guards.sql     rating range + snapshot>=eligible constraints;
+                                  eligible_from_date computed in the RPC
+    008_votes_optional.sql        official_num_votes nullable / default null
+    009_consensus_read.sql        get_prediction_consensus / get_prediction_stats
+    010_rating_snapshots.sql      daily rating_snapshots table
   seed.sql              sample movies + settlement
 tests/
-  unit/                 scoring + eligibility (no DB)
-  integration/          predictions + settlement (live DB, self-skip)
+  unit/                 scoring, eligibility, utils, leaderboard, consensus (no DB)
+  integration/          predictions, settlement, leaderboard, consensus,
+                        snapshots (live DB, self-skip)
 types/                  supabase.ts + domain aliases
 middleware.ts           session refresh + protected-route redirects
 next.config.ts          TMDb remote images
@@ -127,7 +157,7 @@ vercel.json             cron schedule
 ```bash
 cp .env.local.example .env.local      # fill in real values (see below)
 npm install
-# apply supabase/migrations/001_initial.sql and 002_settlement_rpc.sql
+# apply every file in supabase/migrations/ (001 through 010, in order)
 # to your Supabase project
 npm run dev
 ```
@@ -164,9 +194,9 @@ Naming is intentional:
 3. Add `http://localhost:3000/auth/callback` (and your Vercel preview /
    production URLs) under **Authentication → URL Configuration → Redirect URLs**.
 4. Apply migrations. Easiest path for a hosted project: open the **SQL Editor**
-   and paste:
-   - `supabase/migrations/001_initial.sql`
-   - `supabase/migrations/002_settlement_rpc.sql`
+   and paste every file in `supabase/migrations/` **in numeric order**
+   (`001_initial.sql` … `010_rating_snapshots.sql`). Migrations are
+   forward-only: never edit an applied file; add a new numbered one instead.
 5. (Optional) paste `supabase/seed.sql` for sample movies.
 
 If you're using the Supabase CLI against a local stack:
@@ -240,19 +270,22 @@ Visit `/admin` signed in as a user whose email is in `ADMIN_EMAILS` (or whose
    top-5 cast), and the first YouTube trailer. Admin overrides are preserved
    on re-sync.
 3. **Settlements** — lists movies in `awaiting_review`, `released_waiting_window`,
-   or `settled`. Enter IMDb rating, vote count, snapshot date, and release
-   date used, then Finalize. The server action validates with Zod and calls
-   the `settle_movie` RPC. An already-settled movie exposes a **Recompute
-   missing score events** button as the fallback retry path.
+   or `settled`. Enter IMDb rating, vote count (optional), snapshot date, and
+   release date used, then Finalize. The server action validates with Zod and
+   calls the `settle_movie` RPC. An already-settled movie exposes a
+   **Recompute missing score events** button as the fallback retry path.
+   Manual settlement works for any movie regardless of snapshot state — it is
+   the override path over cron auto-settlement.
 
 ### Manual settlement workflow
 
 1. A movie reaches `awaiting_review` (cron does this automatically on day 28).
 2. Admin opens IMDb and reads the current rating and vote count.
 3. Admin opens `/admin` → Settlements tab, finds the movie, enters:
-   - **Official rating** (e.g. 7.4)
-  - **Official num votes**
-   - **Settlement snapshot date** — the date the IMDb snapshot was taken
+   - **Official rating** (e.g. 7.4) — must be 1.0–10.0
+   - **Official num votes** (optional, informational only)
+   - **Settlement snapshot date** — the date the IMDb snapshot was taken;
+     must be on/after `release date used + 28` (DB constraint)
    - **Release date used** — pre-filled from the movie
    - **Notes** (optional)
 4. Click **Finalize settlement**. The RPC runs atomically:
@@ -273,14 +306,35 @@ added rows to `predictions` after settlement via a manual SQL path), click
 Vercel Cron hits `/api/cron/check-movie-lifecycle` daily at 03:00 UTC per
 `vercel.json`.
 
-It does date-driven transitions and optional auto-settlement:
+It runs three phases (all idempotent; it never changes prediction locks):
 
-- `upcoming → released_waiting_window` when `release_date <= today`
-- `released_waiting_window → awaiting_review` when `release_date <= today − 28`
-- `awaiting_review → settled` when day-28+ and TMDb snapshot data exists
-  (`tmdb_rating_snapshot`, `tmdb_num_votes_snapshot`, `tmdb_snapshot_date`)
+1. **Status transitions** (date-driven):
+   - `upcoming → released_waiting_window` when `release_date <= today`
+   - `released_waiting_window → awaiting_review` when
+     `release_date <= today − 28`
+2. **Snapshot phase**: for every movie in `released_waiting_window` or
+   `awaiting_review`, fetch the current TMDb rating (`/movie/{tmdb_id}`) and
+   insert today's row into `rating_snapshots` (`on conflict do nothing`).
+   Movies with a TMDb rating of 0 or fewer than 50 votes are skipped and
+   counted in `snapshotSkipped`. TMDb calls are capped at 100 per run
+   (`tmdbCalls` in the response).
+3. **Auto-settle phase**: for every `awaiting_review` movie, find the
+   earliest `rating_snapshots` row with `snapshot_date >= release_date + 28`
+   and settle from it (`settle_movie` via the service client,
+   `source_type = 'api_import'`, `source_snapshot = 'tmdb:<snapshot_date>'`).
+   Movies without an eligible snapshot yet are counted in
+   `awaitingSnapshot`. The migration-007 constraints are the backstop; this
+   query is the primary guard.
 
-It never changes prediction locks. All transitions are idempotent.
+The old auto-settle from the deprecated `movies.tmdb_*_snapshot` columns was
+removed (it could settle with pre-release garbage data), and the
+`autoSettled` / `autoSkipped` response fields are gone with it. Those columns
+are no longer written — superseded by `rating_snapshots`.
+
+**Snapshot source note:** v1 snapshots come from TMDb as a stated proxy for
+IMDb. `settlements.source_type` / `source_snapshot` record this. Manual
+settlement remains the override path for any movie regardless of snapshot
+state.
 
 ### Auth
 
@@ -299,7 +353,7 @@ Missing or wrong token returns **401**.
 curl -H "Authorization: Bearer $CRON_SECRET" \
   http://localhost:3000/api/cron/check-movie-lifecycle
 
-# → {"ok":true,"result":{"upcomingToWaiting":0,"waitingToAwaiting":0,"autoSettled":0,"autoSkipped":0,"errors":[]}}
+# → {"ok":true,"result":{"upcomingToWaiting":0,"waitingToAwaiting":0,"snapshotsInserted":0,"snapshotSkipped":0,"tmdbCalls":0,"settledFromSnapshot":0,"awaitingSnapshot":0,"errors":[]}}
 ```
 
 ### Admin TMDb sync endpoint
@@ -314,6 +368,41 @@ Authorization is via the user's Supabase session — the handler calls
 
 ---
 
+## Community consensus
+
+Once predictions for a movie are locked (derived state `locked`, or status
+past `upcoming`), the movie detail page shows the community's predictions in
+aggregate: median, prediction count, a 0.5-wide-bucket histogram, and — if
+the viewer predicted — "You predicted 7.9 — above the community median of
+7.4."
+
+Raw predictions stay own-read (they're attributable). Aggregates are exposed
+only through two `security definer` RPCs from migration 009:
+
+- `get_prediction_consensus(p_movie_id)` → `(bucket numeric, count int)` rows
+- `get_prediction_stats(p_movie_id)` → `(prediction_count, median, mean)`
+
+**Both privacy gates live inside the SQL functions, not the UI** — the RPCs
+are exposed via PostgREST to anonymous callers, so a React-only check would
+be bypassable by calling `/rest/v1/rpc/...` directly:
+
+1. **Lock gate** — while a movie is still open for predictions
+   (`status = 'upcoming'` and lock time unset/in the future) the call is
+   invalid and raises errcode `42501`.
+2. **Minimum-sample gate** — with fewer than 3 predictions
+   (`MIN_CONSENSUS_PREDICTIONS` in `lib/predictions/consensus.ts`, mirrored
+   from the SQL constant in migration 009) the call is valid but returns
+   **zero rows**: no partial stats, no count. The raise-vs-empty distinction
+   is deliberate: the UI renders nothing on empty without try/catch, and an
+   empty response leaks only "fewer than 3 predictions exist".
+
+Consensus is only safe to expose because predictions are immutable after
+lock. Any future *pre-lock* aggregate feature would reopen a
+histogram-differencing attack and must not reuse these functions (see the
+comment in `supabase/migrations/009_consensus_read.sql`).
+
+---
+
 ## Tests
 
 ```bash
@@ -325,14 +414,22 @@ npm run test:watch # vitest watch mode
 
 - `tests/unit/scoring.test.ts` — `calcPoints`, `calcPointsWithBonus`, including
   the +10 bonus boundary and the zero floor.
-- `tests/unit/eligibility.test.ts` — `checkEligibility`, including the day-28
-  boundary.
+- `tests/unit/eligibility.test.ts` — `checkEligibility` and
+  `daysUntilSettlement`, including the day-27/28 boundaries.
+- `tests/unit/utils.test.ts` — `toLocalDatetimeInputValue` round-trip under a
+  fixed timezone offset.
+- `tests/unit/leaderboard.test.ts` — page-merge helper (`collectPages`) and
+  the pure ranking aggregation.
+- `tests/unit/consensus.test.ts` — bucket/median math and the comparison
+  text, mirroring the SQL aggregates.
 
 ### Integration tests (skip without live DB)
 
 Located in `tests/integration/*.test.ts`. They self-skip unless both
-`NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set. To run
-them locally, make sure your `.env.local` is loaded:
+`NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set; tests
+that exercise anonymous or user-session access additionally need
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. To run them locally, make sure your
+`.env.local` is loaded:
 
 ```bash
 set -a; source .env.local; set +a
@@ -343,13 +440,24 @@ Coverage:
 
 - `predictions.test.ts` — insert succeeds on an open movie, unique-constraint
   blocks a duplicate, upsert updates the value, out-of-range values rejected,
-  lock state is derived from `prediction_locks_at` rather than status.
+  lock state is derived from `prediction_locks_at` rather than status;
+  deletes fail closed for locked and nonexistent movies.
 - `settlement.test.ts` — calling `settle_movie` settles the movie and writes
   one score event per prediction with correct points; a repeat call is a
-  no-op (no duplicate rows, settlement row not updated); aggregated totals
-  match the scoring formula.
+  no-op; a non-admin user-session RPC call is rejected (42501) with nothing
+  written; snapshot-before-eligibility and out-of-range ratings hit the DB
+  constraints; `eligible_from_date` equals `release_date_used + 28`; settling
+  works with and without a vote count.
+- `leaderboard.test.ts` — an anon client sees all users' score events, and
+  the leaderboard aggregation ranks them correctly.
+- `consensus.test.ts` — the consensus RPCs called directly with an anon
+  client: raise on an open movie, zero rows below 3 predictions, correct
+  median/buckets at 3.
+- `snapshots.test.ts` — auto-settle picks the day-29 snapshot over day-27,
+  leaves a day-20-only movie unsettled, is idempotent, and the snapshot
+  phase skips low-quality data.
 
-Both files create and tear down their own users + movies via the service-role
+All files create and tear down their own users + movies via the service-role
 client. They never touch seed data.
 
 ---
@@ -368,9 +476,9 @@ client. They never touch seed data.
 
 ## Settlement implementation choice
 
-Settlement is implemented as a Postgres RPC (`settle_movie`) in
-`supabase/migrations/002_settlement_rpc.sql`, per the spec's preferred path.
-It is:
+Settlement is implemented as a Postgres RPC (`settle_movie`), originally in
+`supabase/migrations/002_settlement_rpc.sql` and last re-defined in
+`008_votes_optional.sql`. It is:
 
 - **Atomic** — the insert into `settlements`, status update on `movies`, and
   insert into `score_events` all run inside a single function call (and
@@ -379,9 +487,21 @@ It is:
   function returns the existing id without writing anything. An
   `on conflict (user_id, movie_id) do nothing` clause on the score_events
   insert is belt-and-suspenders.
-- **Security definer** — so the RPC can bypass RLS on the inner writes. The
-  `settleMovieAction` in `lib/admin/actions.ts` gates access with
-  `requireAdmin()` before calling.
+- **Security definer with an in-function authorization check** (migration
+  005) — PostgREST exposes every public function, so the RPC itself rejects
+  callers that are neither admins (`profiles.role = 'admin'`) nor the
+  service role, with errcode `42501`. EXECUTE is revoked from `anon` and
+  `PUBLIC`.
+- **Guarded** (migration 007) — rating must be 1.0–10.0, the snapshot date
+  must be on/after eligibility, and `eligible_from_date` is computed inside
+  the function from `release_date_used + 28`.
+
+The app path (`settleMovieAction` → `requireAdmin()` →
+`lib/settlement/service.ts`) calls the RPC with the **service-role client**:
+`requireAdmin()` also accepts email-only admins (`ADMIN_EMAILS`) whose
+`profiles.role` is still `'user'`, and those would fail the in-function role
+check. The in-function check protects the direct PostgREST door; the app
+door is protected by `requireAdmin()`.
 
 A fallback server-code path exists in `lib/settlement/service.ts`
 (`recomputeScoreEvents`) for admin re-drive if needed.
@@ -390,11 +510,14 @@ A fallback server-code path exists in `lib/settlement/service.ts`
 
 ## Future roadmap
 
-Not in the v1 MVP, but kept in mind when drawing schema lines:
+Not in the current build, but kept in mind when drawing schema lines:
 
-- Automated IMDb ingestion (vote counts + rating) — would populate a new
-  `imdb_snapshots` table keyed by `(movie_id, snapshot_date)`. `settlements`
-  already has `source_type` to distinguish `manual` from `api_import`.
+- True IMDb ingestion — `rating_snapshots` already keys on
+  `(movie_id, source, snapshot_date)` with `source in ('tmdb', 'imdb')`, so
+  an IMDb feed can land beside the TMDb proxy without schema changes.
+- Settlement email notifications — explicitly deferred from v9; no email
+  provider, email code, or `RESEND_API_KEY` exists in this build and nothing
+  may depend on it yet.
 - Seasons / rounds — would add a `seasons` table and `movies.season_id`.
   Leaderboard would filter on season; current weekly/monthly tiles remain as
   sub-filters.
