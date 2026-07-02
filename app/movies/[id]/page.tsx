@@ -232,9 +232,11 @@ export default async function MovieDetailPage({ params }: PageProps) {
                     <p className="text-muted-foreground">Official IMDb rating</p>
                     <p className="text-2xl font-bold">
                       {settlement.official_rating.toFixed(1)}
-                      <span className="ml-2 text-xs font-normal text-muted-foreground">
-                        ({settlement.official_num_votes.toLocaleString()} votes)
-                      </span>
+                      {settlement.official_num_votes != null ? (
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">
+                          ({settlement.official_num_votes.toLocaleString()} votes)
+                        </span>
+                      ) : null}
                     </p>
                   </div>
                   {prediction ? (

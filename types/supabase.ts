@@ -131,7 +131,7 @@ export interface Database {
           id: string
           movie_id: string
           official_rating: number
-          official_num_votes: number
+          official_num_votes: number | null
           settlement_snapshot_date: string
           settled_at: string
           release_date_used: string
@@ -145,7 +145,7 @@ export interface Database {
           id?: string
           movie_id: string
           official_rating: number
-          official_num_votes: number
+          official_num_votes?: number | null
           settlement_snapshot_date: string
           settled_at?: string
           release_date_used: string
@@ -191,7 +191,7 @@ export interface Database {
         Args: {
           p_movie_id: string
           p_official_rating: number
-          p_official_num_votes: number
+          p_official_num_votes?: number | null
           p_settlement_snapshot_date: string
           p_release_date_used: string
           p_settlement_notes?: string | null

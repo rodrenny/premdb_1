@@ -101,10 +101,15 @@ export async function settleMovieAction(
 ): Promise<ActionResult> {
   await requireAdmin()
 
+  const rawVotes = formData.get('officialNumVotes')
   const parsed = settlementSchema.safeParse({
     movieId: formData.get('movieId'),
     officialRating: Number(formData.get('officialRating')),
-    officialNumVotes: Number(formData.get('officialNumVotes')),
+    // Optional field: an empty input must become undefined, not NaN/0.
+    officialNumVotes:
+      typeof rawVotes === 'string' && rawVotes.trim() !== ''
+        ? Number(rawVotes)
+        : undefined,
     settlementSnapshotDate: formData.get('settlementSnapshotDate'),
     releaseDateUsed: formData.get('releaseDateUsed'),
     settlementNotes:

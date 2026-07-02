@@ -4,7 +4,7 @@ import type { Movie } from '@/types'
 export interface SettleMovieInput {
   movieId: string
   officialRating: number
-  officialNumVotes: number
+  officialNumVotes?: number | null
   settlementSnapshotDate: string // ISO date
   releaseDateUsed: string // ISO date
   settlementNotes?: string
@@ -55,7 +55,7 @@ export async function settleMovie(
   const { data, error } = await supabase.rpc('settle_movie', {
     p_movie_id: input.movieId,
     p_official_rating: input.officialRating,
-    p_official_num_votes: input.officialNumVotes,
+    p_official_num_votes: input.officialNumVotes ?? null,
     p_settlement_snapshot_date: input.settlementSnapshotDate,
     p_release_date_used: input.releaseDateUsed,
     p_settlement_notes: input.settlementNotes ?? null,

@@ -240,6 +240,45 @@ run('settlement guards (live DB, A3)', () => {
     expect(error?.code).toBe('23514')
   })
 
+  it('settles without a vote count and records null (B4)', async () => {
+    const movie = await freshAwaitingMovie(40)
+    const { data: settlementId, error } = await svc.rpc('settle_movie', {
+      p_movie_id: movie.id,
+      p_official_rating: 6.8,
+      p_settlement_snapshot_date: isoDaysAgo(2),
+      p_release_date_used: movie.release_date!,
+    })
+    expect(error).toBeNull()
+    expect(typeof settlementId).toBe('string')
+
+    const { data: settlement } = await svc
+      .from('settlements')
+      .select('official_num_votes, official_rating')
+      .eq('movie_id', movie.id)
+      .single()
+    expect(settlement?.official_num_votes).toBeNull()
+    expect(Number(settlement?.official_rating)).toBe(6.8)
+  })
+
+  it('still records the vote count when provided (B4)', async () => {
+    const movie = await freshAwaitingMovie(40)
+    const { error } = await svc.rpc('settle_movie', {
+      p_movie_id: movie.id,
+      p_official_rating: 7.9,
+      p_official_num_votes: 12_345,
+      p_settlement_snapshot_date: isoDaysAgo(2),
+      p_release_date_used: movie.release_date!,
+    })
+    expect(error).toBeNull()
+
+    const { data: settlement } = await svc
+      .from('settlements')
+      .select('official_num_votes')
+      .eq('movie_id', movie.id)
+      .single()
+    expect(settlement?.official_num_votes).toBe(12_345)
+  })
+
   it('accepts valid input and computes eligible_from_date = release + 28', async () => {
     const movie = await freshAwaitingMovie(40)
     const { data: settlementId, error } = await svc.rpc('settle_movie', {

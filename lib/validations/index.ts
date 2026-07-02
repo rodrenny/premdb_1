@@ -24,7 +24,8 @@ export const predictionSchema = z.object({
 export const settlementSchema = z.object({
   movieId: z.uuid(),
   officialRating: z.number().min(1).max(10),
-  officialNumVotes: z.int().min(0),
+  // Informational metadata only — not part of the settlement contract (B4).
+  officialNumVotes: z.int().min(0).optional(),
   settlementSnapshotDate: z.iso.date(),
   releaseDateUsed: z.iso.date(),
   settlementNotes: z.string().optional(),
