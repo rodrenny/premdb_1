@@ -1,6 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import type { Movie } from '@/types'
-import { SETTLEMENT_WINDOW_DAYS } from './eligibility'
 
 export interface SettleMovieInput {
   movieId: string
@@ -18,12 +17,6 @@ export interface SettleMovieResult {
   settlementId?: string
   alreadySettled?: boolean
   error?: string
-}
-
-function addDaysISO(iso: string, days: number): string {
-  const d = new Date(iso)
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
 }
 
 /**
@@ -57,15 +50,14 @@ export async function settleMovie(
     .eq('movie_id', input.movieId)
     .maybeSingle()
 
-  const eligibleFromDate = addDaysISO(input.releaseDateUsed, SETTLEMENT_WINDOW_DAYS)
-
+  // eligible_from_date is computed inside the RPC (release_date_used + 28)
+  // since migration 007 — callers no longer supply it.
   const { data, error } = await supabase.rpc('settle_movie', {
     p_movie_id: input.movieId,
     p_official_rating: input.officialRating,
     p_official_num_votes: input.officialNumVotes,
     p_settlement_snapshot_date: input.settlementSnapshotDate,
     p_release_date_used: input.releaseDateUsed,
-    p_eligible_from_date: eligibleFromDate,
     p_settlement_notes: input.settlementNotes ?? null,
     p_source_type: input.sourceType ?? 'manual',
     p_source_snapshot: input.sourceSnapshot ?? null,

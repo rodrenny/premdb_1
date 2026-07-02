@@ -57,7 +57,6 @@ run('settlement RPC (live DB)', () => {
       p_official_num_votes: 8_000,
       p_settlement_snapshot_date: new Date().toISOString().slice(0, 10),
       p_release_date_used: releaseDate,
-      p_eligible_from_date: new Date().toISOString().slice(0, 10),
       p_settlement_notes: 'integration test',
     })
 
@@ -102,7 +101,6 @@ run('settlement RPC (live DB)', () => {
       p_official_num_votes: 99_999,
       p_settlement_snapshot_date: '2099-01-01',
       p_release_date_used: releaseDate,
-      p_eligible_from_date: '2099-01-15',
       p_settlement_notes: 'should be ignored',
     })
 
@@ -145,7 +143,6 @@ run('settlement RPC (live DB)', () => {
       p_official_num_votes: 1,
       p_settlement_snapshot_date: new Date().toISOString().slice(0, 10),
       p_release_date_used: movie.release_date!,
-      p_eligible_from_date: new Date().toISOString().slice(0, 10),
     })
 
     expect(data).toBeNull()
@@ -188,5 +185,83 @@ run('settlement RPC (live DB)', () => {
     const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1])
     expect(sorted[0]?.[1]).toBe(110)
     expect(sorted[1]?.[1]).toBe(70)
+  })
+})
+
+run('settlement guards (live DB, A3)', () => {
+  const svc = hasSupabaseEnv ? makeServiceClient() : null!
+  const movieIds: string[] = []
+
+  function isoDaysAgo(days: number): string {
+    return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  }
+
+  afterAll(async () => {
+    if (movieIds.length > 0) {
+      await svc.from('movies').delete().in('id', movieIds)
+    }
+  })
+
+  async function freshAwaitingMovie(releasedDaysAgo: number) {
+    const movie = await insertTestMovie(svc, {
+      release_date: isoDaysAgo(releasedDaysAgo),
+      status: 'awaiting_review',
+    })
+    movieIds.push(movie.id)
+    return movie
+  }
+
+  it('rejects a snapshot date earlier than release + 28', async () => {
+    const movie = await freshAwaitingMovie(30)
+    const { error } = await svc.rpc('settle_movie', {
+      p_movie_id: movie.id,
+      p_official_rating: 7.0,
+      p_official_num_votes: 1_000,
+      // Day 20 snapshot — before the day-28 eligibility date.
+      p_settlement_snapshot_date: isoDaysAgo(10),
+      p_release_date_used: movie.release_date!,
+    })
+    expect(error).not.toBeNull()
+    // settlements_snapshot_after_eligible check violation
+    expect(error?.code).toBe('23514')
+  })
+
+  it('rejects an out-of-range rating like 0.5', async () => {
+    const movie = await freshAwaitingMovie(40)
+    const { error } = await svc.rpc('settle_movie', {
+      p_movie_id: movie.id,
+      p_official_rating: 0.5,
+      p_official_num_votes: 1_000,
+      p_settlement_snapshot_date: isoDaysAgo(2),
+      p_release_date_used: movie.release_date!,
+    })
+    expect(error).not.toBeNull()
+    // settlements_rating_range check violation
+    expect(error?.code).toBe('23514')
+  })
+
+  it('accepts valid input and computes eligible_from_date = release + 28', async () => {
+    const movie = await freshAwaitingMovie(40)
+    const { data: settlementId, error } = await svc.rpc('settle_movie', {
+      p_movie_id: movie.id,
+      p_official_rating: 7.2,
+      p_official_num_votes: 5_000,
+      p_settlement_snapshot_date: isoDaysAgo(2),
+      p_release_date_used: movie.release_date!,
+    })
+    expect(error).toBeNull()
+    expect(typeof settlementId).toBe('string')
+
+    const { data: settlement } = await svc
+      .from('settlements')
+      .select('eligible_from_date, release_date_used')
+      .eq('movie_id', movie.id)
+      .single()
+
+    const expected = new Date(`${movie.release_date}T00:00:00.000Z`)
+    expected.setUTCDate(expected.getUTCDate() + 28)
+    expect(settlement?.eligible_from_date).toBe(
+      expected.toISOString().slice(0, 10),
+    )
   })
 })

@@ -185,7 +185,7 @@ export interface Database {
         Relationships: []
       }
     }
-    Views: Record<string, never>
+    Views: { [_ in never]: never }
     Functions: {
       settle_movie: {
         Args: {
@@ -194,7 +194,6 @@ export interface Database {
           p_official_num_votes: number
           p_settlement_snapshot_date: string
           p_release_date_used: string
-          p_eligible_from_date: string
           p_settlement_notes?: string | null
           p_source_type?: string | null
           p_source_snapshot?: string | null
@@ -202,7 +201,7 @@ export interface Database {
         Returns: string
       }
     }
-    Enums: Record<string, never>
-    CompositeTypes: Record<string, never>
+    Enums: { [_ in never]: never }
+    CompositeTypes: { [_ in never]: never }
   }
 }
