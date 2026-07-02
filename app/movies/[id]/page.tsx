@@ -14,6 +14,7 @@ import { MovieStatusBadge } from '@/components/movies/movie-status-badge'
 import { PredictionForm } from '@/components/predictions/prediction-form'
 import { SettlementRuleBox } from '@/components/movies/settlement-rule'
 import { ConsensusPanel } from '@/components/movies/consensus-panel'
+import { SettlementCountdown } from '@/components/movies/settlement-countdown'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -188,6 +189,9 @@ export default async function MovieDetailPage({ params }: PageProps) {
 
         <aside className="space-y-4">
           <SettlementRuleBox />
+
+          {/* Renders nothing outside released_waiting_window / awaiting_review. */}
+          <SettlementCountdown movie={movie} />
 
           {/* Community consensus is only revealed after predictions lock —
               the SQL functions enforce the gates; this condition just avoids

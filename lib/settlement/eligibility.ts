@@ -39,3 +39,20 @@ export function checkEligibility(input: EligibilityInput): Eligibility {
 
   return 'ready_to_settle'
 }
+
+/**
+ * Whole days until the movie becomes settlement-eligible (release + 28),
+ * clamped at 0. 0 means the window has been reached — the movie settles at
+ * the first daily snapshot from now on. Returns null without a release date.
+ *
+ * Boundaries: day 27 → 1, day 28 → 0.
+ */
+export function daysUntilSettlement(input: EligibilityInput): number | null {
+  const { releaseDate, now = new Date() } = input
+
+  if (!releaseDate) return null
+  const release = toDate(releaseDate)
+  const daysSince = daysBetween(now, release)
+
+  return Math.max(0, SETTLEMENT_WINDOW_DAYS - daysSince)
+}
