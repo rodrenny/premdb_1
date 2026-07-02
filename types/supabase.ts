@@ -187,6 +187,25 @@ export interface Database {
     }
     Views: { [_ in never]: never }
     Functions: {
+      get_prediction_consensus: {
+        Args: {
+          p_movie_id: string
+        }
+        Returns: {
+          bucket: number
+          count: number
+        }[]
+      }
+      get_prediction_stats: {
+        Args: {
+          p_movie_id: string
+        }
+        Returns: {
+          prediction_count: number
+          median: number
+          mean: number
+        }[]
+      }
       settle_movie: {
         Args: {
           p_movie_id: string

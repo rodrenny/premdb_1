@@ -13,6 +13,7 @@ import { formatDate, formatDateTime } from '@/lib/utils'
 import { MovieStatusBadge } from '@/components/movies/movie-status-badge'
 import { PredictionForm } from '@/components/predictions/prediction-form'
 import { SettlementRuleBox } from '@/components/movies/settlement-rule'
+import { ConsensusPanel } from '@/components/movies/consensus-panel'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -187,6 +188,18 @@ export default async function MovieDetailPage({ params }: PageProps) {
 
         <aside className="space-y-4">
           <SettlementRuleBox />
+
+          {/* Community consensus is only revealed after predictions lock —
+              the SQL functions enforce the gates; this condition just avoids
+              a pointless RPC round-trip for open movies. */}
+          {state !== 'open' ? (
+            <ConsensusPanel
+              movieId={movie.id}
+              userPrediction={
+                prediction ? Number(prediction.predicted_value) : null
+              }
+            />
+          ) : null}
 
           <Card>
             <CardHeader>
