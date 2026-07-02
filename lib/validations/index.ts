@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SETTLEMENT_WINDOW_DAYS } from '@/lib/settlement/eligibility'
 
 export const emailSchema = z.object({
   email: z.email(),
@@ -21,15 +22,28 @@ export const predictionSchema = z.object({
     .refine((v) => Math.round(v * 10) === v * 10, 'One decimal place only'),
 })
 
-export const settlementSchema = z.object({
-  movieId: z.uuid(),
-  officialRating: z.number().min(1).max(10),
-  // Informational metadata only — not part of the settlement contract (B4).
-  officialNumVotes: z.int().min(0).optional(),
-  settlementSnapshotDate: z.iso.date(),
-  releaseDateUsed: z.iso.date(),
-  settlementNotes: z.string().optional(),
-})
+export const settlementSchema = z
+  .object({
+    movieId: z.uuid(),
+    officialRating: z.number().min(1).max(10),
+    // Informational metadata only — not part of the settlement contract (B4).
+    officialNumVotes: z.int().min(0).optional(),
+    settlementSnapshotDate: z.iso.date(),
+    releaseDateUsed: z.iso.date(),
+    settlementNotes: z.string().optional(),
+  })
+  .refine(
+    (s) => {
+      const eligible = new Date(`${s.releaseDateUsed}T00:00:00Z`)
+      eligible.setUTCDate(eligible.getUTCDate() + SETTLEMENT_WINDOW_DAYS)
+      return new Date(`${s.settlementSnapshotDate}T00:00:00Z`) >= eligible
+    },
+    {
+      // Friendly mirror of the settlements_snapshot_after_eligible DB
+      // constraint, so admins see this instead of a raw Postgres error.
+      message: `Snapshot date must be on or after the release date + ${SETTLEMENT_WINDOW_DAYS} days.`,
+    },
+  )
 
 export const movieAdminSchema = z.object({
   imdbId: z.string().optional(),

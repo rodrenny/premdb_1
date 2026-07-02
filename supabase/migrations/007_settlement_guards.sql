@@ -11,13 +11,19 @@
 --      p_release_date_used + 28 instead of trusting the caller, so the
 --      p_eligible_from_date parameter is dropped.
 
+-- NOT VALID: both constraints fully enforce all NEW writes (inserts/updates)
+-- but skip validating pre-existing rows. A database that ran the old broken
+-- cron may already contain rating-0.0 settlements — validating those here
+-- would abort the migration, and migrations are forward-only.
 alter table public.settlements
   add constraint settlements_rating_range
-  check (official_rating >= 1.0 and official_rating <= 10.0);
+  check (official_rating >= 1.0 and official_rating <= 10.0)
+  not valid;
 
 alter table public.settlements
   add constraint settlements_snapshot_after_eligible
-  check (settlement_snapshot_date >= eligible_from_date);
+  check (settlement_snapshot_date >= eligible_from_date)
+  not valid;
 
 -- The parameter list changes, so the old signature must be dropped explicitly
 -- (CREATE OR REPLACE cannot remove a parameter).
@@ -49,7 +55,7 @@ declare
 begin
   -- Authorization: allow only admins or the service role.
   -- auth.uid() is NULL for service-role calls (no JWT user), so service-role
-  -- callers (cron) pass via the coalesce branch.
+  -- callers (cron) pass via the role-claim branch below.
   if auth.uid() is not null then
     if coalesce(
          (select role from public.profiles where id = auth.uid()),
@@ -59,9 +65,17 @@ begin
         using errcode = '42501';
     end if;
   end if;
-  if auth.uid() is null and current_setting('request.jwt.claims', true) is not null
-     and coalesce(current_setting('request.jwt.claims', true), '') <> '' then
-    -- JWT present but no uid (e.g. anon key): reject.
+  if auth.uid() is null
+     and coalesce(current_setting('request.jwt.claims', true), '') <> ''
+     and coalesce(
+           nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
+           ''
+         ) <> 'service_role' then
+    -- JWT present but neither a user (no uid) nor the service role (e.g. the
+    -- bare anon key): reject. Service-role requests DO carry a JWT through
+    -- PostgREST ({"role":"service_role"}, no sub), so the check must inspect
+    -- the role claim rather than reject every uid-less JWT — otherwise the
+    -- cron and admin settlement paths (service client) would be locked out.
     raise exception 'settle_movie: admin role required' using errcode = '42501';
   end if;
 

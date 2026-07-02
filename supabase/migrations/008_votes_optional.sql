@@ -33,7 +33,7 @@ declare
 begin
   -- Authorization: allow only admins or the service role.
   -- auth.uid() is NULL for service-role calls (no JWT user), so service-role
-  -- callers (cron) pass via the coalesce branch.
+  -- callers (cron) pass via the role-claim branch below.
   if auth.uid() is not null then
     if coalesce(
          (select role from public.profiles where id = auth.uid()),
@@ -43,9 +43,17 @@ begin
         using errcode = '42501';
     end if;
   end if;
-  if auth.uid() is null and current_setting('request.jwt.claims', true) is not null
-     and coalesce(current_setting('request.jwt.claims', true), '') <> '' then
-    -- JWT present but no uid (e.g. anon key): reject.
+  if auth.uid() is null
+     and coalesce(current_setting('request.jwt.claims', true), '') <> ''
+     and coalesce(
+           nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
+           ''
+         ) <> 'service_role' then
+    -- JWT present but neither a user (no uid) nor the service role (e.g. the
+    -- bare anon key): reject. Service-role requests DO carry a JWT through
+    -- PostgREST ({"role":"service_role"}, no sub), so the check must inspect
+    -- the role claim rather than reject every uid-less JWT — otherwise the
+    -- cron and admin settlement paths (service client) would be locked out.
     raise exception 'settle_movie: admin role required' using errcode = '42501';
   end if;
 

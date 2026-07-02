@@ -87,7 +87,10 @@ export async function runSnapshotPhase(
       result.tmdbCalls += 1
       const { rating, numVotes } = await fetchRating(movie.tmdb_id)
 
-      if (rating <= 0 || numVotes < SNAPSHOT_MIN_VOTES) {
+      // Floor of 1.0 matches the settlements_rating_range constraint —
+      // recording a sub-1.0 snapshot would only produce a settlement the DB
+      // rejects on every subsequent cron run.
+      if (rating < 1 || numVotes < SNAPSHOT_MIN_VOTES) {
         result.snapshotSkipped += 1
         continue
       }

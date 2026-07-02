@@ -44,8 +44,9 @@ function isoDaysAgo(days: number): string {
  *
  * Auth: requires `Authorization: Bearer ${CRON_SECRET}`.
  */
-async function runTransitions(): Promise<TransitionResult> {
-  const supabase = createServiceClient()
+async function runTransitions(
+  supabase: ReturnType<typeof createServiceClient>,
+): Promise<TransitionResult> {
   const result: TransitionResult = {
     upcomingToWaiting: 0,
     waitingToAwaiting: 0,
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest) {
   }
   try {
     const supabase = createServiceClient()
-    const transitions = await runTransitions()
+    const transitions = await runTransitions(supabase)
     const snapshots = await runSnapshotPhase(supabase)
     const autoSettle = await runAutoSettlePhase(supabase)
 
