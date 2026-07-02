@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
 import { requireAdmin } from '@/lib/auth/admin'
+import type { Database } from '@/types/supabase'
 import {
   movieAdminSchema,
   settlementSchema,
@@ -52,7 +53,7 @@ export async function updateMovieAdminAction(
     }
   }
 
-  const update: Record<string, unknown> = {
+  const update: Database['public']['Tables']['movies']['Update'] = {
     updated_at: new Date().toISOString(),
   }
   if (parsed.data.imdbId !== undefined) update.imdb_id = parsed.data.imdbId
