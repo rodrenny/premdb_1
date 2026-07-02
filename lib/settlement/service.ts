@@ -1,4 +1,4 @@
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import type { Movie } from '@/types'
 import { SETTLEMENT_WINDOW_DAYS } from './eligibility'
 
@@ -35,13 +35,20 @@ function addDaysISO(iso: string, days: number): string {
  *  - flipping `movies.status` to 'settled'
  *  - creating one `score_events` row per existing prediction
  *
- * This keeps the whole write path atomic. Auth is enforced by the caller
- * (admin server action / admin route handler).
+ * This keeps the whole write path atomic.
+ *
+ * Uses the service-role client deliberately: this function is only ever
+ * invoked from `settleMovieAction` after `requireAdmin()`, which also accepts
+ * email-only admins (`ADMIN_EMAILS`) whose `profiles.role` is still 'user'.
+ * Those admins would fail the in-function role check added in migration 005
+ * if we called the RPC with the user-session client. The in-function check
+ * remains the guard against direct PostgREST calls; this app path is guarded
+ * by `requireAdmin()` instead.
  */
 export async function settleMovie(
   input: SettleMovieInput,
 ): Promise<SettleMovieResult> {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
 
   // Was the movie already settled before this call?
   const { data: priorSettlement } = await supabase

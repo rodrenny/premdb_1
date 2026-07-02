@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   createTestUser,
+  createTestUserWithSession,
   deleteTestUser,
+  hasAnonEnv,
   hasSupabaseEnv,
   insertTestMovie,
   makeServiceClient,
@@ -120,6 +122,56 @@ run('settlement RPC (live DB)', () => {
       .eq('movie_id', movieId)
       .single()
     expect(Number(settlement?.official_rating)).toBe(7.5)
+  })
+
+  it('rejects a non-admin authenticated caller with a permission error (A1)', async () => {
+    if (!hasAnonEnv) return // needs a user-session client
+
+    const { id: nonAdminId, client: userClient } =
+      await createTestUserWithSession(svc, 'premdb-settle-nonadmin')
+    userIds.push(nonAdminId)
+
+    const movie = await insertTestMovie(svc, {
+      release_date: new Date(Date.now() - 30 * 86_400_000)
+        .toISOString()
+        .slice(0, 10),
+      status: 'awaiting_review',
+    })
+    movieIds.push(movie.id)
+
+    const { data, error } = await userClient.rpc('settle_movie', {
+      p_movie_id: movie.id,
+      p_official_rating: 9.9,
+      p_official_num_votes: 1,
+      p_settlement_snapshot_date: new Date().toISOString().slice(0, 10),
+      p_release_date_used: movie.release_date!,
+      p_eligible_from_date: new Date().toISOString().slice(0, 10),
+    })
+
+    expect(data).toBeNull()
+    expect(error).not.toBeNull()
+    // errcode 42501 (insufficient_privilege) raised inside settle_movie.
+    expect(`${error?.code} ${error?.message}`).toMatch(/42501|admin role required/)
+
+    // And nothing may have been written.
+    const { count: settlementCount } = await svc
+      .from('settlements')
+      .select('id', { count: 'exact', head: true })
+      .eq('movie_id', movie.id)
+    expect(settlementCount).toBe(0)
+
+    const { count: eventCount } = await svc
+      .from('score_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('movie_id', movie.id)
+    expect(eventCount).toBe(0)
+
+    const { data: unchanged } = await svc
+      .from('movies')
+      .select('status')
+      .eq('id', movie.id)
+      .single()
+    expect(unchanged?.status).toBe('awaiting_review')
   })
 
   it('score_events aggregate into leaderboard points', async () => {
