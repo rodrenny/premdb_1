@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { SETTLEMENT_WINDOW_DAYS } from '@/lib/settlement/eligibility'
+import {
+  runAutoSettlePhase,
+  runSnapshotPhase,
+} from '@/lib/settlement/auto'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,19 +21,26 @@ function isoDaysAgo(days: number): string {
 }
 
 /**
- * Lifecycle cron. Date-driven status transitions only:
+ * Lifecycle cron, in three phases:
  *
- *   upcoming                → released_waiting_window   (release_date <= today)
- *   released_waiting_window → awaiting_review           (release_date <= today - 28)
+ * 1. Date-driven status transitions:
+ *      upcoming                → released_waiting_window (release_date <= today)
+ *      released_waiting_window → awaiting_review         (release_date <= today - 28)
+ * 2. Snapshot phase: record today's TMDb rating for every movie in
+ *    released_waiting_window / awaiting_review (skipping low-quality data,
+ *    capped at 100 TMDb calls per run).
+ * 3. Auto-settle phase: settle each awaiting_review movie from the earliest
+ *    rating snapshot taken on or after release + 28 — the settlement
+ *    contract, literally.
  *
- * Auto-settlement from the movies.tmdb_*_snapshot columns was removed: those
- * columns are written during TMDb sync of *upcoming* movies, i.e. usually
+ * The old auto-settle from movies.tmdb_*_snapshot columns was removed: those
+ * columns were written during TMDb sync of *upcoming* movies, i.e. usually
  * pre-release with vote_average = 0, so settling from them violated the
- * settlement contract ("first daily snapshot on or after day 28").
- * Auto-settlement returns on top of real daily `rating_snapshots` (Part C3).
+ * contract.
  *
  * Idempotent: re-running produces no new side effects once a movie is in its
- * correct state.
+ * correct state (snapshots conflict on (movie_id, source, snapshot_date);
+ * settle_movie returns the existing settlement id).
  *
  * Auth: requires `Authorization: Bearer ${CRON_SECRET}`.
  */
@@ -85,8 +96,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    const result = await runTransitions()
-    return NextResponse.json({ ok: true, result })
+    const supabase = createServiceClient()
+    const transitions = await runTransitions()
+    const snapshots = await runSnapshotPhase(supabase)
+    const autoSettle = await runAutoSettlePhase(supabase)
+
+    return NextResponse.json({
+      ok: true,
+      result: {
+        upcomingToWaiting: transitions.upcomingToWaiting,
+        waitingToAwaiting: transitions.waitingToAwaiting,
+        snapshotsInserted: snapshots.snapshotsInserted,
+        snapshotSkipped: snapshots.snapshotSkipped,
+        tmdbCalls: snapshots.tmdbCalls,
+        settledFromSnapshot: autoSettle.settledFromSnapshot,
+        awaitingSnapshot: autoSettle.awaitingSnapshot,
+        errors: [
+          ...transitions.errors,
+          ...snapshots.errors,
+          ...autoSettle.errors,
+        ],
+      },
+    })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unknown error'
     return NextResponse.json({ ok: false, error: message }, { status: 500 })

@@ -27,6 +27,8 @@ export type UserRole = 'user' | 'admin'
 
 export type SettlementSourceType = 'manual' | 'dataset' | 'api_import'
 
+export type RatingSnapshotSource = 'tmdb' | 'imdb'
+
 export interface Database {
   public: {
     Tables: {
@@ -156,6 +158,28 @@ export interface Database {
           settlement_notes?: string | null
         }
         Update: Partial<Database['public']['Tables']['settlements']['Insert']>
+        Relationships: []
+      }
+      rating_snapshots: {
+        Row: {
+          id: string
+          movie_id: string
+          source: RatingSnapshotSource
+          rating: number
+          num_votes: number | null
+          snapshot_date: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          movie_id: string
+          source?: RatingSnapshotSource
+          rating: number
+          num_votes?: number | null
+          snapshot_date: string
+          created_at?: string
+        }
+        Update: Partial<Database['public']['Tables']['rating_snapshots']['Insert']>
         Relationships: []
       }
       score_events: {
