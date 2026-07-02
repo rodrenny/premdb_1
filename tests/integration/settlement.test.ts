@@ -258,7 +258,7 @@ run('settlement guards (live DB, A3)', () => {
       .eq('movie_id', movie.id)
       .single()
 
-    const expected = new Date(`${movie.release_date}T00:00:00.000Z`)
+    const expected = new Date(`${movie.release_date}T00:00:00Z`)
     expected.setUTCDate(expected.getUTCDate() + 28)
     expect(settlement?.eligible_from_date).toBe(
       expected.toISOString().slice(0, 10),

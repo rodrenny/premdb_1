@@ -41,7 +41,7 @@ async function fetchMovieBundle(tmdbId: number): Promise<MovieInsert | null> {
 
   // Default prediction lock = release date at 00:00 UTC when not already set.
   const prediction_locks_at = movie.release_date
-    ? `${movie.release_date}T00:00:00.000Z`
+    ? new Date(`${movie.release_date}T00:00:00Z`).toISOString()
     : null
 
   return {
