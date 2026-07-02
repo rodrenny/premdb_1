@@ -1,0 +1,59 @@
+import Link from 'next/link'
+import { getLeaderboard } from '@/lib/leaderboard/service'
+import { LeaderboardTable } from '@/components/leaderboard/leaderboard-table'
+import type { LeaderboardRange } from '@/types'
+
+export const metadata = { title: 'Leaderboard — PreMDB' }
+
+const RANGES: { value: LeaderboardRange; label: string }[] = [
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'all_time', label: 'All-time' },
+]
+
+interface PageProps {
+  searchParams: Promise<{ range?: string }>
+}
+
+function parseRange(raw: string | undefined): LeaderboardRange {
+  if (raw === 'weekly' || raw === 'monthly' || raw === 'all_time') return raw
+  return 'all_time'
+}
+
+export default async function LeaderboardPage({ searchParams }: PageProps) {
+  const { range: rawRange } = await searchParams
+  const range = parseRange(rawRange)
+  const entries = await getLeaderboard(range)
+
+  return (
+    <main className="container space-y-6 py-10">
+      <header>
+        <h1 className="text-3xl font-bold tracking-tight">Leaderboard</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Global ranking by points earned on settled movies.
+        </p>
+      </header>
+
+      <nav className="flex gap-2">
+        {RANGES.map((r) => {
+          const active = r.value === range
+          return (
+            <Link
+              key={r.value}
+              href={r.value === 'all_time' ? '/leaderboard' : `/leaderboard?range=${r.value}`}
+              className={
+                active
+                  ? 'rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground'
+                  : 'rounded-md border border-border/60 px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground'
+              }
+            >
+              {r.label}
+            </Link>
+          )
+        })}
+      </nav>
+
+      <LeaderboardTable entries={entries} />
+    </main>
+  )
+}
