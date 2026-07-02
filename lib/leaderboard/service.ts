@@ -1,4 +1,6 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+import type { Database } from '@/types/supabase'
 import type { LeaderboardEntry, LeaderboardRange } from '@/types'
 
 function rangeSince(range: LeaderboardRange): string | null {
@@ -12,31 +14,20 @@ function rangeSince(range: LeaderboardRange): string | null {
   return now.toISOString()
 }
 
+interface ScoreEventSlice {
+  user_id: string
+  points: number
+}
+
 /**
- * Aggregates leaderboard server-side from `score_events` joined against
- * `profiles`. v1 intentionally does this in code (no DB view), since it keeps
- * the schema simpler and leaderboard traffic is low.
+ * Pure aggregation: totals per user, sorted, dense-ranked. Extracted so the
+ * math is unit-testable without a DB.
  */
-export async function getLeaderboard(
-  range: LeaderboardRange,
-  limit = 50,
-): Promise<LeaderboardEntry[]> {
-  const supabase = await createClient()
-  const since = rangeSince(range)
-
-  let query = supabase
-    .from('score_events')
-    .select('user_id, points, created_at')
-
-  if (since) {
-    query = query.gte('created_at', since)
-  }
-
-  const { data: events, error } = await query
-  if (error || !events) return []
-
-  // Aggregate in memory — score_events row counts are bounded by
-  // settled_movies * users_who_predicted and will stay small for v1.
+export function aggregateLeaderboard(
+  events: ScoreEventSlice[],
+  usernameById: Map<string, string | null>,
+  limit: number,
+): LeaderboardEntry[] {
   const totals = new Map<string, { total: number; count: number }>()
   for (const e of events) {
     const prev = totals.get(e.user_id) ?? { total: 0, count: 0 }
@@ -48,27 +39,15 @@ export async function getLeaderboard(
 
   if (totals.size === 0) return []
 
-  const userIds = [...totals.keys()]
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('id, username')
-    .in('id', userIds)
-
-  const usernameById = new Map<string, string | null>()
-  for (const p of profiles ?? []) {
-    usernameById.set(p.id, p.username)
-  }
-
-  const entries: LeaderboardEntry[] = userIds.map((uid) => {
-    const t = totals.get(uid)!
-    return {
+  const entries: LeaderboardEntry[] = [...totals.entries()].map(
+    ([uid, t]) => ({
       user_id: uid,
       username: usernameById.get(uid) ?? null,
       total_points: t.total,
       settled_count: t.count,
       rank: 0, // filled below
-    }
-  })
+    }),
+  )
 
   entries.sort((a, b) => {
     if (b.total_points !== a.total_points) {
@@ -89,4 +68,53 @@ export async function getLeaderboard(
   })
 
   return entries.slice(0, limit)
+}
+
+/**
+ * Aggregates the leaderboard from `score_events` joined against `profiles`,
+ * using whatever client is passed in (page reads keep respecting RLS —
+ * score_events is public-read per migration 006). v1 intentionally does this
+ * in code (no DB view), since it keeps the schema simpler and leaderboard
+ * traffic is low.
+ */
+export async function fetchLeaderboard(
+  supabase: SupabaseClient<Database>,
+  range: LeaderboardRange,
+  limit = 50,
+): Promise<LeaderboardEntry[]> {
+  const since = rangeSince(range)
+
+  let query = supabase
+    .from('score_events')
+    .select('user_id, points, created_at')
+
+  if (since) {
+    query = query.gte('created_at', since)
+  }
+
+  const { data: events, error } = await query
+  if (error || !events) return []
+
+  if (events.length === 0) return []
+
+  const userIds = [...new Set(events.map((e) => e.user_id))]
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, username')
+    .in('id', userIds)
+
+  const usernameById = new Map<string, string | null>()
+  for (const p of profiles ?? []) {
+    usernameById.set(p.id, p.username)
+  }
+
+  return aggregateLeaderboard(events, usernameById, limit)
+}
+
+/** Request-scoped wrapper used by the leaderboard page. */
+export async function getLeaderboard(
+  range: LeaderboardRange,
+  limit = 50,
+): Promise<LeaderboardEntry[]> {
+  return fetchLeaderboard(await createClient(), range, limit)
 }
