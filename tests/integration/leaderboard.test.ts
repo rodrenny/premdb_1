@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { fetchLeaderboard } from '@/lib/leaderboard/service'
+import { fetchLeaderboard } from '@/lib/leaderboard/aggregate'
 import {
   createTestUser,
   deleteTestUser,
