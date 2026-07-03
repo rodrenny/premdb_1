@@ -12,15 +12,19 @@ export const LEADERBOARD_PAGE_SIZE = 1000
  */
 export const LEADERBOARD_MAX_PAGES = 20
 
-function rangeSince(range: LeaderboardRange): string | null {
+/**
+ * Cutoff instant for a range, or null for all-time. Computed in UTC via
+ * millisecond arithmetic so it does not depend on the server's local time
+ * zone (behavior is identical on UTC hosts like Vercel, just now explicit).
+ * Exported for unit testing.
+ */
+export function rangeSince(
+  range: LeaderboardRange,
+  now: Date = new Date(),
+): string | null {
   if (range === 'all_time') return null
-  const now = new Date()
-  if (range === 'weekly') {
-    now.setDate(now.getDate() - 7)
-  } else {
-    now.setDate(now.getDate() - 30)
-  }
-  return now.toISOString()
+  const days = range === 'weekly' ? 7 : 30
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString()
 }
 
 /**
