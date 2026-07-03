@@ -23,7 +23,7 @@ function parseRange(raw: string | undefined): LeaderboardRange {
 export default async function LeaderboardPage({ searchParams }: PageProps) {
   const { range: rawRange } = await searchParams
   const range = parseRange(rawRange)
-  const entries = await getLeaderboard(range)
+  const result = await getLeaderboard(range)
 
   return (
     <main className="container space-y-6 py-10">
@@ -53,7 +53,16 @@ export default async function LeaderboardPage({ searchParams }: PageProps) {
         })}
       </nav>
 
-      <LeaderboardTable entries={entries} />
+      {result.ok ? (
+        <LeaderboardTable entries={result.entries} />
+      ) : (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-sm">
+          <p className="font-medium">Couldn&apos;t load the leaderboard.</p>
+          <p className="mt-1 text-muted-foreground">
+            Something went wrong fetching the scores. Please try again.
+          </p>
+        </div>
+      )}
     </main>
   )
 }

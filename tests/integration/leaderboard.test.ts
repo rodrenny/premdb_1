@@ -77,7 +77,10 @@ run('leaderboard visibility (live DB)', () => {
   it('all-time leaderboard contains every scored user, dense-ranked (A2)', async () => {
     // Same aggregation getLeaderboard() runs — with an anon client instead of
     // the request-scoped one, so RLS is exercised as an anonymous visitor.
-    const entries = await fetchLeaderboard(makeAnonClient(), 'all_time', 1000)
+    const result = await fetchLeaderboard(makeAnonClient(), 'all_time', 1000)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const entries = result.entries
 
     const ours = entries.filter((e) => userIds.includes(e.user_id))
     expect(ours).toHaveLength(3)
