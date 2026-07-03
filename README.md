@@ -151,7 +151,7 @@ tests/
   integration/          predictions, settlement, leaderboard, consensus,
                         snapshots (live DB, self-skip)
 types/                  supabase.ts + domain aliases
-middleware.ts           session refresh + protected-route redirects
+proxy.ts                session refresh + protected-route redirects (Next 16 proxy convention)
 next.config.ts          TMDb remote images
 vercel.json             cron schedule
 ```
@@ -162,8 +162,8 @@ vercel.json             cron schedule
 
 ```bash
 cp .env.local.example .env.local      # fill in real values (see below)
-npm install
-# apply every file in supabase/migrations/ (001 through 010, in order)
+npm ci --ignore-scripts
+# apply every file in supabase/migrations/ (001 through 014, in order)
 # to your Supabase project
 npm run dev
 ```
@@ -172,16 +172,18 @@ The app is available at `http://localhost:3000`.
 
 ### Env vars
 
-All six are required for full functionality.
+All five are required for full functionality.
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL="https://xxxx.supabase.co"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="sb_publishable_..."
 SUPABASE_SERVICE_ROLE_KEY="eyJ..."           # server-only, never ship to client
 TMDB_READ_ACCESS_TOKEN="eyJ..."               # v4 read access token
-ADMIN_EMAILS="you@yourdomain.com,other@..."  # comma-separated
 CRON_SECRET="long-random-string"             # used by /api/cron/*
 ```
+
+Admin access is not an env var: it is granted by inserting a user into the
+`admin_users` table (see **Admin authorization**).
 
 Naming is intentional:
 
@@ -253,10 +255,10 @@ into `TMDB_READ_ACCESS_TOKEN`. This app never uses the v3 API key.
 4. The route handler calls `exchangeCodeForSession(code)` and redirects to
    `/dashboard` (or whatever `next=` requested, validated to start with `/`).
 
-Session cookies are kept in sync by `middleware.ts`, which calls
-`@supabase/ssr`'s `updateSession` on every request following the official
-Next.js App Router pattern. Middleware also redirects unauthenticated users
-away from `/dashboard` and `/admin`.
+Session cookies are kept in sync by `proxy.ts` (the Next 16 rename of the
+`middleware.ts` convention), which calls `@supabase/ssr`'s `updateSession` on
+every request following the official Next.js App Router pattern. The proxy
+also redirects unauthenticated users away from `/dashboard` and `/admin`.
 
 Onboarding is **not** blocking. If a new user has no `profiles.username`, the
 dashboard shows a banner + inline form to set one. Username is optional until
@@ -266,16 +268,15 @@ they want to appear on the leaderboard.
 
 ## Admin authorization
 
-There are two kinds of admin, both of which work through the app:
-
-- **Email-only admins** — any email listed in `ADMIN_EMAILS`. Their
-  `profiles.role` stays `'user'`; they are recognized by `requireAdmin()` and
-  operate through the service-role app path.
-- **DB-role admins** — users present in the `public.admin_users` table.
+Admin status has a single source of truth: membership in the
+`public.admin_users` table. `requireAdmin()` grants `/admin` access to any
+signed-in user present there, and nothing else. (v10 also honored an
+`ADMIN_EMAILS` env var; v11 removed it — `admin_users` covers the need with
+one mechanism instead of three.)
 
 `profiles.role` is **deprecated for authorization** as of v10 (migration 012)
-and must not be read for access decisions — it is left in place only because
-dropping columns is out of scope.
+and is not read anywhere — it is left in the schema only because dropping
+columns is a deferred change.
 
 ### Why the JWT hook
 
@@ -325,15 +326,20 @@ on conflict (user_id) do nothing;
 The user must obtain a fresh token (sign out/in or refresh) for `is_admin()`
 and the admin RLS policies to see the claim. To revoke, delete the row.
 
+> **Lockout guard.** `admin_users` is now the *only* admin path. Before
+> deploying a build that has removed `ADMIN_EMAILS` (v11), confirm your own
+> user id is already in `admin_users` — run the insert above for yourself
+> first. Deploying without that row leaves no one able to reach `/admin`.
+
 ### The admin console
 
-Visit `/admin` signed in as either admin type. The page is one route with
-three tabs:
+Visit `/admin` signed in as a user present in `admin_users`. The page is one
+route with three tabs:
 
 1. **Movies** — search by title, override `imdb_id` / `release_date` /
    `prediction_locks_at` / `status`, mark canceled. Writes use the
-   service-role client (after `requireAdmin()` passes) so email-only admins,
-   and DB-role admins whose token hasn't refreshed yet, can still operate.
+   service-role client (after `requireAdmin()` passes) so an admin whose token
+   hasn't refreshed to carry the `app_role` claim yet can still operate.
 2. **Sync** — POSTs to `/api/admin/tmdb-sync`, which pulls 3 pages of
    `/movie/upcoming` and upserts each movie with details, credits (director +
    top-5 cast), and the first YouTube trailer. Admin overrides are preserved
@@ -576,12 +582,10 @@ Settlement is implemented as a Postgres RPC (`settle_movie`), originally in
 
 The app path (`settleMovieAction` → `requireAdmin()` →
 `lib/settlement/service.ts`) calls the RPC with the **service-role client**:
-`requireAdmin()` accepts both email-only admins (`ADMIN_EMAILS`) and DB-role
-admins (`admin_users`), and either could lack the `app_role` claim on the
-current request (an email-only admin never has it; a DB-role admin whose token
-hasn't refreshed doesn't yet), so they would fail the in-function check via a
-user-session client. The in-function check protects the direct PostgREST door;
-the app door is protected by `requireAdmin()`.
+`requireAdmin()` authorizes via `admin_users`, but a DB-role admin whose token
+hasn't refreshed yet lacks the `app_role` claim and would fail the in-function
+check via a user-session client. The in-function check protects the direct
+PostgREST door; the app door is protected by `requireAdmin()`.
 
 A fallback server-code path exists in `lib/settlement/service.ts`
 (`recomputeScoreEvents`) for admin re-drive if needed.
@@ -611,6 +615,17 @@ update this table.
 
 ---
 
+## Schema discipline
+
+All schema changes go through numbered files in `supabase/migrations/` — never
+the hosted SQL editor. Migration 014 existed only to remove a `settle_movie`
+overload that no migration ever created: it had been hand-made in the SQL
+editor, so the production schema had drifted from the repo. Treat the SQL
+editor as read-only; the repo is the single source of truth for schema. Detect
+any drift with `supabase db diff --linked` before it becomes a mystery.
+
+---
+
 ## Future roadmap
 
 Not in the current build, but kept in mind when drawing schema lines:
@@ -636,8 +651,8 @@ Not in the current build, but kept in mind when drawing schema lines:
 ## Commands reference
 
 ```bash
-# install
-npm install
+# install (reproducible, from the committed lockfile)
+npm ci --ignore-scripts
 
 # dev
 npm run dev

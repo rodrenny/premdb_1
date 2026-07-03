@@ -1,23 +1,13 @@
 import { redirect } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
-function adminEmails(): string[] {
-  return (process.env.ADMIN_EMAILS ?? '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-}
-
 /**
- * A user is admin if either:
- *  - their email is in the `ADMIN_EMAILS` env var (email-only admins whose
- *    `profiles.role` stays `'user'`), or
- *  - they are a DB-role admin, i.e. present in `public.admin_users`.
+ * A user is admin iff they are present in `public.admin_users` — the single
+ * source of truth (migration 012). `admin_users` is service-role-only, so the
+ * lookup uses the service client.
  *
- * DB-role admin status moved from `profiles.role` to `admin_users` in
- * migration 012 (profiles.role is deprecated for authorization). `admin_users`
- * is service-role-only, so the check uses the service client. Both admin
- * notions continue to work through the app.
+ * Promote a user by inserting their id into `admin_users` (see the README);
+ * there is no self-serve path by design.
  */
 export async function isAdmin(): Promise<boolean> {
   const supabase = await createClient()
@@ -25,10 +15,6 @@ export async function isAdmin(): Promise<boolean> {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return false
-
-  if (user.email && adminEmails().includes(user.email.toLowerCase())) {
-    return true
-  }
 
   const svc = createServiceClient()
   const { data: adminRow } = await svc

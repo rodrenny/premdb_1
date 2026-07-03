@@ -24,8 +24,6 @@ export type MovieStatus =
   | 'settled'
   | 'canceled'
 
-export type UserRole = 'user' | 'admin'
-
 export type SettlementSourceType = 'manual' | 'dataset' | 'api_import'
 
 export type RatingSnapshotSource = 'tmdb' | 'imdb'
@@ -34,8 +32,7 @@ export interface Database {
   public: {
     Tables: {
       // Source of truth for DB-role admins (migration 012). Service-role-only;
-      // never reachable from the client API. profiles.role is deprecated for
-      // authorization.
+      // never reachable from the client API.
       admin_users: {
         Row: {
           user_id: string
@@ -52,22 +49,18 @@ export interface Database {
         Row: {
           id: string
           username: string | null
-          /** @deprecated for authorization — admin status lives in admin_users (migration 012). */
-          role: UserRole
           created_at: string
           updated_at: string
         }
         Insert: {
           id: string
           username?: string | null
-          role?: UserRole
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
           username?: string | null
-          role?: UserRole
           created_at?: string
           updated_at?: string
         }
@@ -87,9 +80,6 @@ export interface Database {
           release_date_source: string | null
           prediction_locks_at: string | null
           runtime: number | null
-          tmdb_rating_snapshot: number | null
-          tmdb_num_votes_snapshot: number | null
-          tmdb_snapshot_date: string | null
           genres: Json
           director_name: string | null
           cast_preview: Json
@@ -111,9 +101,6 @@ export interface Database {
           release_date_source?: string | null
           prediction_locks_at?: string | null
           runtime?: number | null
-          tmdb_rating_snapshot?: number | null
-          tmdb_num_votes_snapshot?: number | null
-          tmdb_snapshot_date?: string | null
           genres?: Json
           director_name?: string | null
           cast_preview?: Json

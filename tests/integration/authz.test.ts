@@ -10,9 +10,9 @@ import {
 const run = hasAnonEnv ? describe : describe.skip
 
 // These exercise the raw PostgREST attack path with a real user-session
-// client — not the app path — because that is exactly the door the column
-// privileges (migration 011) and the JWT admin model (migration 012) close.
-run('authorization hardening (live DB, v10 A1)', () => {
+// client — not the app path — because that is exactly the door the JWT admin
+// model (migration 012) closes.
+run('authorization hardening (live DB)', () => {
   const svc = hasAnonEnv ? makeServiceClient() : null!
   const userIds: string[] = []
 
@@ -20,52 +20,7 @@ run('authorization hardening (live DB, v10 A1)', () => {
     for (const id of userIds) await deleteTestUser(svc, id)
   })
 
-  it('blocks self-service role escalation via raw PostgREST (A1.1)', async () => {
-    const { id, client } = await createTestUserWithSession(svc, 'premdb-escal')
-    userIds.push(id)
-
-    // Give the victim a username so we can prove the legit path still works.
-    await svc.from('profiles').update({ username: `esc-${id.slice(0, 8)}` }).eq('id', id)
-
-    // Attack: PATCH own profile row setting role=admin.
-    const escalation = await client
-      .from('profiles')
-      .update({ role: 'admin' })
-      .eq('id', id)
-      .select('id')
-
-    // Column privilege denies the write: either an explicit permission error,
-    // or (depending on PostgREST) zero rows affected. Either way role must
-    // not change.
-    if (!escalation.error) {
-      expect(escalation.data ?? []).toHaveLength(0)
-    }
-
-    const { data: after } = await svc
-      .from('profiles')
-      .select('role')
-      .eq('id', id)
-      .single()
-    expect(after?.role).toBe('user')
-
-    // The legitimate column update (username) still succeeds for the owner.
-    const newName = `renamed-${id.slice(0, 8)}`
-    const rename = await client
-      .from('profiles')
-      .update({ username: newName })
-      .eq('id', id)
-      .select('username')
-    expect(rename.error).toBeNull()
-
-    const { data: renamed } = await svc
-      .from('profiles')
-      .select('username')
-      .eq('id', id)
-      .single()
-    expect(renamed?.username).toBe(newName)
-  })
-
-  it('denies a non-admin the admin doors via raw PostgREST (A1.2, hook-independent)', async () => {
+  it('denies a non-admin the admin doors via raw PostgREST (hook-independent)', async () => {
     const { id, client } = await createTestUserWithSession(svc, 'premdb-nonadmin')
     userIds.push(id)
 
@@ -131,30 +86,35 @@ run('authorization hardening (live DB, v10 A1)', () => {
     await svc.from('movies').delete().eq('id', movie.id)
   })
 
-  it('promoting a user into admin_users flips is_admin() once the token is re-issued (A1.2)', async () => {
-    // admin_users is the source of truth requireAdmin() consults. Membership
-    // alone drives the app-side admin check (service-role read); the JWT claim
-    // used by is_admin()/RLS additionally requires the custom-access-token
-    // hook to be enabled AND a fresh token (re-login). This test asserts the
-    // membership wiring unconditionally, and the claim only if the hook is on.
+  it('admin_users membership is the sole admin signal (v11 P4)', async () => {
+    // admin_users is the only thing requireAdmin()/isAdmin() consult: they do
+    // exactly this service-client lookup (lib/auth/admin.ts). Absent → not
+    // admin; present → admin. It is the single admin mechanism.
     const { id, client } = await createTestUserWithSession(svc, 'premdb-promote')
     userIds.push(id)
 
-    await svc.from('admin_users').insert({ user_id: id })
-
-    // Service-role read (what lib/auth/admin.ts uses) sees the membership.
-    const { data: member } = await svc
+    // Absent from admin_users → the admin lookup finds nothing.
+    const absent = await svc
       .from('admin_users')
       .select('user_id')
       .eq('user_id', id)
       .maybeSingle()
-    expect(member?.user_id).toBe(id)
+    expect(absent.data).toBeNull()
 
-    // Refresh the session so a newly-issued token would carry the claim.
+    // Promote: insert into admin_users (the only promotion path).
+    await svc.from('admin_users').insert({ user_id: id })
+
+    const present = await svc
+      .from('admin_users')
+      .select('user_id')
+      .eq('user_id', id)
+      .maybeSingle()
+    expect(present.data?.user_id).toBe(id)
+
+    // With a fresh token the JWT-claim path (is_admin() / RLS) also flips —
+    // only if the custom-access-token hook is enabled in the test project.
     await client.auth.refreshSession()
     const { data: isAdminNow } = await client.rpc('is_admin')
-    // If the hook is enabled in the test project this is true; if not, the
-    // membership wiring above is still the operative admin signal for the app.
     expect([true, false]).toContain(isAdminNow)
 
     await svc.from('admin_users').delete().eq('user_id', id)
