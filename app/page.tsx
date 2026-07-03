@@ -21,6 +21,9 @@ export default async function HomePage() {
       .limit(5),
     getLeaderboard('all_time', 5),
   ])
+  // Landing preview degrades to empty on failure; the dedicated /leaderboard
+  // page renders the distinct error state.
+  const leaderboardEntries = leaderboard.ok ? leaderboard.entries : []
 
   return (
     <main>
@@ -109,7 +112,7 @@ export default async function HomePage() {
             Full leaderboard →
           </Link>
         </div>
-        <LeaderboardTable entries={leaderboard} />
+        <LeaderboardTable entries={leaderboardEntries} />
       </section>
     </main>
   )

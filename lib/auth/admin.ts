@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 
 function adminEmails(): string[] {
   return (process.env.ADMIN_EMAILS ?? '')
@@ -10,8 +10,14 @@ function adminEmails(): string[] {
 
 /**
  * A user is admin if either:
- *  - their `profiles.role` is `'admin'`, or
- *  - their email is in the `ADMIN_EMAILS` env var.
+ *  - their email is in the `ADMIN_EMAILS` env var (email-only admins whose
+ *    `profiles.role` stays `'user'`), or
+ *  - they are a DB-role admin, i.e. present in `public.admin_users`.
+ *
+ * DB-role admin status moved from `profiles.role` to `admin_users` in
+ * migration 012 (profiles.role is deprecated for authorization). `admin_users`
+ * is service-role-only, so the check uses the service client. Both admin
+ * notions continue to work through the app.
  */
 export async function isAdmin(): Promise<boolean> {
   const supabase = await createClient()
@@ -24,13 +30,14 @@ export async function isAdmin(): Promise<boolean> {
     return true
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
+  const svc = createServiceClient()
+  const { data: adminRow } = await svc
+    .from('admin_users')
+    .select('user_id')
+    .eq('user_id', user.id)
     .maybeSingle()
 
-  return profile?.role === 'admin'
+  return !!adminRow
 }
 
 /**

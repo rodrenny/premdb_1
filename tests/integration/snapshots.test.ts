@@ -208,3 +208,36 @@ run('rating snapshots + auto-settlement (live DB, C3)', () => {
     expect(goodCount).toBe(1)
   })
 })
+
+run('rating_snapshots rating constraint (live DB, B2)', () => {
+  const svc = hasSupabaseEnv ? makeServiceClient() : null!
+  const movieIds: string[] = []
+
+  afterAll(async () => {
+    if (movieIds.length > 0) {
+      await svc.from('movies').delete().in('id', movieIds)
+    }
+  })
+
+  it('rejects a snapshot with rating 0.0 and accepts a valid one', async () => {
+    const movie = await insertTestMovie(svc, { status: 'awaiting_review' })
+    movieIds.push(movie.id)
+
+    const bad = await svc.from('rating_snapshots').insert({
+      movie_id: movie.id,
+      rating: 0.0,
+      num_votes: 100,
+      snapshot_date: isoDaysAgo(1),
+    })
+    expect(bad.error).not.toBeNull()
+    expect(bad.error?.code).toBe('23514') // check constraint violation
+
+    const good = await svc.from('rating_snapshots').insert({
+      movie_id: movie.id,
+      rating: 7.3,
+      num_votes: 100,
+      snapshot_date: isoDaysAgo(1),
+    })
+    expect(good.error).toBeNull()
+  })
+})

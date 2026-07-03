@@ -12,15 +12,19 @@ export const LEADERBOARD_PAGE_SIZE = 1000
  */
 export const LEADERBOARD_MAX_PAGES = 20
 
-function rangeSince(range: LeaderboardRange): string | null {
+/**
+ * Cutoff instant for a range, or null for all-time. Computed in UTC via
+ * millisecond arithmetic so it does not depend on the server's local time
+ * zone (behavior is identical on UTC hosts like Vercel, just now explicit).
+ * Exported for unit testing.
+ */
+export function rangeSince(
+  range: LeaderboardRange,
+  now: Date = new Date(),
+): string | null {
   if (range === 'all_time') return null
-  const now = new Date()
-  if (range === 'weekly') {
-    now.setDate(now.getDate() - 7)
-  } else {
-    now.setDate(now.getDate() - 30)
-  }
-  return now.toISOString()
+  const days = range === 'weekly' ? 7 : 30
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString()
 }
 
 /**
@@ -105,42 +109,61 @@ export function aggregateLeaderboard(
  * in code (no DB view), since it keeps the schema simpler and leaderboard
  * traffic is low.
  */
+/**
+ * Discriminated result so callers can distinguish a genuine empty leaderboard
+ * ("no settled movies yet") from a transient failure ("couldn't load"). The
+ * old `.catch(() => [])` collapsed both into an empty array, hiding outages on
+ * the app's centerpiece page.
+ */
+export type LeaderboardResult =
+  | { ok: true; entries: LeaderboardEntry[] }
+  | { ok: false; error: string }
+
 export async function fetchLeaderboard(
   supabase: SupabaseClient<Database>,
   range: LeaderboardRange,
   limit = 50,
-): Promise<LeaderboardEntry[]> {
+): Promise<LeaderboardResult> {
   const since = rangeSince(range)
 
-  const events = await collectPages<ScoreEventSlice>(
-    async (offset, pageSize) => {
-      let query = supabase
-        .from('score_events')
-        .select('user_id, points, created_at')
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(offset, offset + pageSize - 1)
-      if (since) {
-        query = query.gte('created_at', since)
-      }
-      const { data, error } = await query
-      if (error) throw new Error(error.message)
-      return data ?? []
-    },
-  ).catch(() => null)
+  try {
+    const events = await collectPages<ScoreEventSlice>(
+      async (offset, pageSize) => {
+        let query = supabase
+          .from('score_events')
+          .select('user_id, points, created_at')
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(offset, offset + pageSize - 1)
+        if (since) {
+          query = query.gte('created_at', since)
+        }
+        const { data, error } = await query
+        if (error) throw new Error(error.message)
+        return data ?? []
+      },
+    )
 
-  if (!events || events.length === 0) return []
+    if (events.length === 0) return { ok: true, entries: [] }
 
-  const userIds = [...new Set(events.map((e) => e.user_id))]
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('id, username')
-    .in('id', userIds)
+    const userIds = [...new Set(events.map((e) => e.user_id))]
+    const { data: profiles, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .in('id', userIds)
+    if (profileError) throw new Error(profileError.message)
 
-  const usernameById = new Map<string, string | null>()
-  for (const p of profiles ?? []) {
-    usernameById.set(p.id, p.username)
+    const usernameById = new Map<string, string | null>()
+    for (const p of profiles ?? []) {
+      usernameById.set(p.id, p.username)
+    }
+
+    return { ok: true, entries: aggregateLeaderboard(events, usernameById, limit) }
+  } catch (e) {
+    const error = e instanceof Error ? e.message : 'Unknown error'
+    // Surface the underlying failure server-side; the page renders a distinct
+    // degraded state rather than a misleading empty leaderboard.
+    console.error('[leaderboard] fetch failed:', error)
+    return { ok: false, error }
   }
-
-  return aggregateLeaderboard(events, usernameById, limit)
 }
