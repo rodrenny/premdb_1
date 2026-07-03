@@ -3,10 +3,12 @@
 Predict the eventual IMDb rating of unreleased movies, and score points when
 they settle.
 
-This is the **v9** build: the tightened v8 MVP plus security hardening
-(RPC authorization, RLS fixes, settlement guards) and product upgrades
-(community consensus, daily rating snapshots, snapshot-driven
-auto-settlement, pre-settlement countdown).
+This is the **v10** build: the v9 MVP (security hardening + community
+consensus + snapshot-driven auto-settlement) plus authorization hardening —
+admin status moved out of the client-writable `profiles.role` column into an
+unforgeable JWT claim, closing a self-service privilege-escalation path — and
+reliability fixes (distinct leaderboard error state, a DB-level snapshot
+rating guard, UTC-explicit range cutoffs).
 
 ---
 
@@ -139,6 +141,9 @@ supabase/
     008_votes_optional.sql        official_num_votes nullable / default null
     009_consensus_read.sql        get_prediction_consensus / get_prediction_stats
     010_rating_snapshots.sql      daily rating_snapshots table
+    011_profiles_column_privileges.sql  lock down profiles UPDATE/INSERT columns
+    012_admin_via_jwt.sql         admin_users + custom_access_token hook + is_admin()
+    013_snapshot_rating_check.sql rating_snapshots rating 1.0-10.0 constraint
   seed.sql              sample movies + settlement
 tests/
   unit/                 scoring, eligibility, utils, leaderboard, consensus (no DB)
@@ -195,9 +200,11 @@ Naming is intentional:
    production URLs) under **Authentication → URL Configuration → Redirect URLs**.
 4. Apply migrations. Easiest path for a hosted project: open the **SQL Editor**
    and paste every file in `supabase/migrations/` **in numeric order**
-   (`001_initial.sql` … `010_rating_snapshots.sql`). Migrations are
+   (`001_initial.sql` … `013_snapshot_rating_check.sql`). Migrations are
    forward-only: never edit an applied file; add a new numbered one instead.
-5. (Optional) paste `supabase/seed.sql` for sample movies.
+5. Enable the custom access token hook (see **Admin authorization** below) —
+   migration `012` defines it but does not activate it.
+6. (Optional) paste `supabase/seed.sql` for sample movies.
 
 If you're using the Supabase CLI against a local stack:
 
@@ -256,15 +263,76 @@ they want to appear on the leaderboard.
 
 ---
 
-## Admin
+## Admin authorization
 
-Visit `/admin` signed in as a user whose email is in `ADMIN_EMAILS` (or whose
-`profiles.role = 'admin'`). The page is one route with three tabs:
+There are two kinds of admin, both of which work through the app:
+
+- **Email-only admins** — any email listed in `ADMIN_EMAILS`. Their
+  `profiles.role` stays `'user'`; they are recognized by `requireAdmin()` and
+  operate through the service-role app path.
+- **DB-role admins** — users present in the `public.admin_users` table.
+
+`profiles.role` is **deprecated for authorization** as of v10 (migration 012)
+and must not be read for access decisions — it is left in place only because
+dropping columns is out of scope.
+
+### Why the JWT hook
+
+Admin status used to be `profiles.role`, but `profiles` is a client-writable,
+API-facing table: a row-level RLS policy let any user `PATCH` their own row to
+`role: 'admin'` and satisfy every admin check (v10 A1). Migration 011 closes
+that with column-level privileges (users may update only `username`), and
+migration 012 removes `profiles.role` from the authorization path entirely:
+
+- `admin_users` holds DB-role admins. RLS is enabled with **no policies** and
+  no anon/authenticated grants, so it is unreachable from the client API.
+- A **custom access token hook** (`public.custom_access_token`) stamps
+  `app_role: 'admin'` into the JWT at issuance for users in `admin_users`.
+- `public.is_admin()` reads that unforgeable claim; the ten admin RLS policies
+  and the `settle_movie` in-function check all use it.
+
+### Enabling the hook (required — a migration does not enable it)
+
+Migration `012` **defines** the hook function but Supabase only calls it once
+it is registered:
+
+- **Hosted:** Dashboard → **Authentication → Hooks** → **Custom Access Token**
+  → select `public.custom_access_token` and enable.
+- **Local dev (`supabase/config.toml`):**
+
+  ```toml
+  [auth.hook.custom_access_token]
+  enabled = true
+  uri = "pg-functions://postgres/public/custom_access_token"
+  ```
+
+The claim is written at token issuance, so a user promoted while signed in
+picks up `app_role` on their next token refresh / re-login.
+
+### Promoting a user to admin (no self-serve path by design)
+
+There is no in-app promotion. An operator inserts the user id into
+`admin_users` with the service role (SQL Editor or a service-role script):
+
+```sql
+-- Find the user id from auth.users (by email), then:
+insert into public.admin_users (user_id)
+select id from auth.users where email = 'newadmin@example.com'
+on conflict (user_id) do nothing;
+```
+
+The user must obtain a fresh token (sign out/in or refresh) for `is_admin()`
+and the admin RLS policies to see the claim. To revoke, delete the row.
+
+### The admin console
+
+Visit `/admin` signed in as either admin type. The page is one route with
+three tabs:
 
 1. **Movies** — search by title, override `imdb_id` / `release_date` /
    `prediction_locks_at` / `status`, mark canceled. Writes use the
-   service-role client (after `requireAdmin()` passes) so email-only admins
-   who haven't had their `profiles.role` promoted can still operate.
+   service-role client (after `requireAdmin()` passes) so email-only admins,
+   and DB-role admins whose token hasn't refreshed yet, can still operate.
 2. **Sync** — POSTs to `/api/admin/tmdb-sync`, which pulls 3 pages of
    `/movie/upcoming` and upserts each movie with details, credits (director +
    top-5 cast), and the first YouTube trailer. Admin overrides are preserved
@@ -420,6 +488,9 @@ npm run test:watch # vitest watch mode
   fixed timezone offset.
 - `tests/unit/leaderboard.test.ts` — page-merge helper (`collectPages`) and
   the pure ranking aggregation.
+- `tests/unit/leaderboard-fetch.test.ts` — `fetchLeaderboard` returns a
+  distinct error result on failure vs. an empty result on no data (B1).
+- `tests/unit/range-since.test.ts` — UTC-explicit weekly/monthly cutoffs (B4).
 - `tests/unit/consensus.test.ts` — bucket/median math and the comparison
   text, mirroring the SQL aggregates.
 
@@ -448,14 +519,19 @@ Coverage:
   written; snapshot-before-eligibility and out-of-range ratings hit the DB
   constraints; `eligible_from_date` equals `release_date_used + 28`; settling
   works with and without a vote count.
+- `authz.test.ts` — the raw PostgREST attack path: self-service role
+  escalation on `profiles` is blocked (role stays `'user'`, username update
+  still works); a non-admin gets `42501` from `settle_movie` and is denied
+  movie/settlement writes; `admin_users` promotion wiring (v10 A1).
 - `leaderboard.test.ts` — an anon client sees all users' score events, and
   the leaderboard aggregation ranks them correctly.
 - `consensus.test.ts` — the consensus RPCs called directly with an anon
   client: raise on an open movie, zero rows below 3 predictions, correct
   median/buckets at 3.
 - `snapshots.test.ts` — auto-settle picks the day-29 snapshot over day-27,
-  leaves a day-20-only movie unsettled, is idempotent, and the snapshot
-  phase skips low-quality data.
+  leaves a day-20-only movie unsettled, is idempotent, the snapshot phase
+  skips low-quality data, and a rating-0.0 snapshot insert is rejected by the
+  DB constraint (B2).
 
 All files create and tear down their own users + movies via the service-role
 client. They never touch seed data.
@@ -488,8 +564,9 @@ Settlement is implemented as a Postgres RPC (`settle_movie`), originally in
   `on conflict (user_id, movie_id) do nothing` clause on the score_events
   insert is belt-and-suspenders.
 - **Security definer with an in-function authorization check** (migration
-  005) — PostgREST exposes every public function, so the RPC itself rejects
-  callers that are neither admins (`profiles.role = 'admin'`) nor the
+  005, moved to the `is_admin()` JWT claim in migration 012) — PostgREST
+  exposes every public function, so the RPC itself rejects callers that are
+  neither admins (`public.is_admin()`, i.e. the `app_role` JWT claim) nor the
   service role, with errcode `42501`. EXECUTE is revoked from `anon` and
   `PUBLIC`.
 - **Guarded** (migration 007) — rating must be 1.0–10.0, the snapshot date
@@ -498,13 +575,38 @@ Settlement is implemented as a Postgres RPC (`settle_movie`), originally in
 
 The app path (`settleMovieAction` → `requireAdmin()` →
 `lib/settlement/service.ts`) calls the RPC with the **service-role client**:
-`requireAdmin()` also accepts email-only admins (`ADMIN_EMAILS`) whose
-`profiles.role` is still `'user'`, and those would fail the in-function role
-check. The in-function check protects the direct PostgREST door; the app
-door is protected by `requireAdmin()`.
+`requireAdmin()` accepts both email-only admins (`ADMIN_EMAILS`) and DB-role
+admins (`admin_users`), and either could lack the `app_role` claim on the
+current request (an email-only admin never has it; a DB-role admin whose token
+hasn't refreshed doesn't yet), so they would fail the in-function check via a
+user-session client. The in-function check protects the direct PostgREST door;
+the app door is protected by `requireAdmin()`.
 
 A fallback server-code path exists in `lib/settlement/service.ts`
 (`recomputeScoreEvents`) for admin re-drive if needed.
+
+---
+
+## Migration map (live function definitions)
+
+Several SQL functions are restated across migrations (forward-only means we
+`CREATE OR REPLACE` in a new file rather than edit an old one). Only the
+**live** definition below is authoritative — earlier copies are dead and must
+not be edited:
+
+| Function | Live definition | Superseded copies |
+|---|---|---|
+| `settle_movie` | **012** | 002, 004, 005, 007, 008 |
+| `is_admin` | **012** | — |
+| `custom_access_token` | **012** | — |
+| `get_prediction_consensus` | **009** | — |
+| `get_prediction_stats` | **009** | — |
+| `prediction_consensus_count` | **009** | — |
+| `handle_new_user` | **001** | — |
+
+When changing one of these, edit only the migration named under "Live
+definition" by adding a **new** migration that `CREATE OR REPLACE`s it, and
+update this table.
 
 ---
 
