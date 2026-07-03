@@ -86,30 +86,35 @@ run('authorization hardening (live DB)', () => {
     await svc.from('movies').delete().eq('id', movie.id)
   })
 
-  it('promoting a user into admin_users flips is_admin() once the token is re-issued (A1.2)', async () => {
-    // admin_users is the source of truth requireAdmin() consults. Membership
-    // alone drives the app-side admin check (service-role read); the JWT claim
-    // used by is_admin()/RLS additionally requires the custom-access-token
-    // hook to be enabled AND a fresh token (re-login). This test asserts the
-    // membership wiring unconditionally, and the claim only if the hook is on.
+  it('admin_users membership is the sole admin signal (v11 P4)', async () => {
+    // admin_users is the only thing requireAdmin()/isAdmin() consult: they do
+    // exactly this service-client lookup (lib/auth/admin.ts). Absent → not
+    // admin; present → admin. It is the single admin mechanism.
     const { id, client } = await createTestUserWithSession(svc, 'premdb-promote')
     userIds.push(id)
 
-    await svc.from('admin_users').insert({ user_id: id })
-
-    // Service-role read (what lib/auth/admin.ts uses) sees the membership.
-    const { data: member } = await svc
+    // Absent from admin_users → the admin lookup finds nothing.
+    const absent = await svc
       .from('admin_users')
       .select('user_id')
       .eq('user_id', id)
       .maybeSingle()
-    expect(member?.user_id).toBe(id)
+    expect(absent.data).toBeNull()
 
-    // Refresh the session so a newly-issued token would carry the claim.
+    // Promote: insert into admin_users (the only promotion path).
+    await svc.from('admin_users').insert({ user_id: id })
+
+    const present = await svc
+      .from('admin_users')
+      .select('user_id')
+      .eq('user_id', id)
+      .maybeSingle()
+    expect(present.data?.user_id).toBe(id)
+
+    // With a fresh token the JWT-claim path (is_admin() / RLS) also flips —
+    // only if the custom-access-token hook is enabled in the test project.
     await client.auth.refreshSession()
     const { data: isAdminNow } = await client.rpc('is_admin')
-    // If the hook is enabled in the test project this is true; if not, the
-    // membership wiring above is still the operative admin signal for the app.
     expect([true, false]).toContain(isAdminNow)
 
     await svc.from('admin_users').delete().eq('user_id', id)

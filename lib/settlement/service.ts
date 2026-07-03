@@ -31,12 +31,11 @@ export interface SettleMovieResult {
  * This keeps the whole write path atomic.
  *
  * Uses the service-role client deliberately: this function is only ever
- * invoked from `settleMovieAction` after `requireAdmin()`, which also accepts
- * email-only admins (`ADMIN_EMAILS`) whose `profiles.role` is still 'user'.
- * Those admins would fail the in-function role check added in migration 005
- * if we called the RPC with the user-session client. The in-function check
- * remains the guard against direct PostgREST calls; this app path is guarded
- * by `requireAdmin()` instead.
+ * invoked from `settleMovieAction` after `requireAdmin()`. A DB-role admin
+ * whose token hasn't refreshed yet lacks the `app_role` JWT claim and would
+ * fail the RPC's in-function `is_admin()` check via a user-session client, so
+ * the app path uses the service client and relies on `requireAdmin()`. The
+ * in-function check remains the guard against direct PostgREST calls.
  */
 export async function settleMovie(
   input: SettleMovieInput,
