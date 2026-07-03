@@ -151,7 +151,7 @@ tests/
   integration/          predictions, settlement, leaderboard, consensus,
                         snapshots (live DB, self-skip)
 types/                  supabase.ts + domain aliases
-middleware.ts           session refresh + protected-route redirects
+proxy.ts                session refresh + protected-route redirects (Next 16 proxy convention)
 next.config.ts          TMDb remote images
 vercel.json             cron schedule
 ```
@@ -162,8 +162,8 @@ vercel.json             cron schedule
 
 ```bash
 cp .env.local.example .env.local      # fill in real values (see below)
-npm install
-# apply every file in supabase/migrations/ (001 through 010, in order)
+npm ci --ignore-scripts
+# apply every file in supabase/migrations/ (001 through 014, in order)
 # to your Supabase project
 npm run dev
 ```
@@ -253,10 +253,10 @@ into `TMDB_READ_ACCESS_TOKEN`. This app never uses the v3 API key.
 4. The route handler calls `exchangeCodeForSession(code)` and redirects to
    `/dashboard` (or whatever `next=` requested, validated to start with `/`).
 
-Session cookies are kept in sync by `middleware.ts`, which calls
-`@supabase/ssr`'s `updateSession` on every request following the official
-Next.js App Router pattern. Middleware also redirects unauthenticated users
-away from `/dashboard` and `/admin`.
+Session cookies are kept in sync by `proxy.ts` (the Next 16 rename of the
+`middleware.ts` convention), which calls `@supabase/ssr`'s `updateSession` on
+every request following the official Next.js App Router pattern. The proxy
+also redirects unauthenticated users away from `/dashboard` and `/admin`.
 
 Onboarding is **not** blocking. If a new user has no `profiles.username`, the
 dashboard shows a banner + inline form to set one. Username is optional until
@@ -636,8 +636,8 @@ Not in the current build, but kept in mind when drawing schema lines:
 ## Commands reference
 
 ```bash
-# install
-npm install
+# install (reproducible, from the committed lockfile)
+npm ci --ignore-scripts
 
 # dev
 npm run dev
