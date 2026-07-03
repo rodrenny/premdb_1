@@ -33,10 +33,26 @@ export type RatingSnapshotSource = 'tmdb' | 'imdb'
 export interface Database {
   public: {
     Tables: {
+      // Source of truth for DB-role admins (migration 012). Service-role-only;
+      // never reachable from the client API. profiles.role is deprecated for
+      // authorization.
+      admin_users: {
+        Row: {
+          user_id: string
+          created_at: string
+        }
+        Insert: {
+          user_id: string
+          created_at?: string
+        }
+        Update: Partial<Database['public']['Tables']['admin_users']['Insert']>
+        Relationships: []
+      }
       profiles: {
         Row: {
           id: string
           username: string | null
+          /** @deprecated for authorization — admin status lives in admin_users (migration 012). */
           role: UserRole
           created_at: string
           updated_at: string
@@ -212,6 +228,10 @@ export interface Database {
     }
     Views: { [_ in never]: never }
     Functions: {
+      is_admin: {
+        Args: Record<string, never>
+        Returns: boolean
+      }
       get_prediction_consensus: {
         Args: {
           p_movie_id: string
