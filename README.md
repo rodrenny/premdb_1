@@ -144,6 +144,7 @@ supabase/
     011_profiles_column_privileges.sql  lock down profiles UPDATE/INSERT columns
     012_admin_via_jwt.sql         admin_users + custom_access_token hook + is_admin()
     013_snapshot_rating_check.sql rating_snapshots rating 1.0-10.0 constraint
+    014_drop_legacy_settle_movie_overload.sql  remove stale RPC overload
   seed.sql              sample movies + settlement
 tests/
   unit/                 scoring, eligibility, utils, leaderboard, consensus (no DB)

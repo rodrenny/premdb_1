@@ -1,6 +1,5 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { isAdmin } from '@/lib/auth/admin'
 import { Button } from '@/components/ui/button'
 import { signOutAction } from '@/lib/auth/actions'
 
@@ -9,7 +8,6 @@ export async function SiteHeader() {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  const admin = user ? await isAdmin() : false
 
   return (
     <header className="border-b border-border/60 bg-background/80 backdrop-blur">
@@ -36,7 +34,7 @@ export async function SiteHeader() {
                 Dashboard
               </Link>
             ) : null}
-            {admin ? (
+            {user ? (
               <Link href="/admin" className="transition hover:text-foreground">
                 Admin
               </Link>
