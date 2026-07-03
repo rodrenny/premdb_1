@@ -41,7 +41,7 @@ async function fetchMovieBundle(tmdbId: number): Promise<MovieInsert | null> {
 
   // Default prediction lock = release date at 00:00 UTC when not already set.
   const prediction_locks_at = movie.release_date
-    ? `${movie.release_date}T00:00:00.000Z`
+    ? new Date(`${movie.release_date}T00:00:00Z`).toISOString()
     : null
 
   return {
@@ -56,13 +56,8 @@ async function fetchMovieBundle(tmdbId: number): Promise<MovieInsert | null> {
     release_date_source: 'tmdb',
     prediction_locks_at,
     runtime: movie.runtime ?? null,
-    tmdb_rating_snapshot:
-      typeof movie.vote_average === 'number'
-        ? Number(movie.vote_average.toFixed(1))
-        : null,
-    tmdb_num_votes_snapshot:
-      typeof movie.vote_count === 'number' ? movie.vote_count : null,
-    tmdb_snapshot_date: new Date().toISOString().slice(0, 10),
+    // The movies.tmdb_*_snapshot columns are deprecated (superseded by the
+    // rating_snapshots table, migration 010) and are no longer written.
     genres: (movie.genres ?? []) as unknown as MovieInsert['genres'],
     director_name: director,
     cast_preview: cast_preview as unknown as MovieInsert['cast_preview'],

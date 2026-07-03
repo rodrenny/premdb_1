@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { predictionSchema } from '@/lib/validations'
 import { isPredictionOpen } from '@/lib/movies/display'
+import { deletePredictionForUser } from './service'
 
 export interface PredictionActionResult {
   ok: boolean
@@ -80,23 +81,8 @@ export async function deletePredictionAction(
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not signed in.' }
 
-  const { data: movie } = await supabase
-    .from('movies')
-    .select('id, status, prediction_locks_at')
-    .eq('id', movieId)
-    .maybeSingle()
-
-  if (movie && !isPredictionOpen(movie)) {
-    return { ok: false, error: 'Predictions are closed for this movie.' }
-  }
-
-  const { error } = await supabase
-    .from('predictions')
-    .delete()
-    .eq('user_id', user.id)
-    .eq('movie_id', movieId)
-
-  if (error) return { ok: false, error: error.message }
+  const result = await deletePredictionForUser(supabase, user.id, movieId)
+  if (!result.ok) return result
 
   revalidatePath(`/movies/${movieId}`)
   revalidatePath('/dashboard')

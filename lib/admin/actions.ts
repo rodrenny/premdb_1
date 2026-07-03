@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
 import { requireAdmin } from '@/lib/auth/admin'
+import type { Database } from '@/types/supabase'
 import {
   movieAdminSchema,
   settlementSchema,
@@ -37,11 +38,10 @@ export async function updateMovieAdminAction(
   if (typeof imdbId === 'string' && imdbId.trim()) raw.imdbId = imdbId.trim()
   if (typeof releaseDate === 'string' && releaseDate) raw.releaseDate = releaseDate
   if (typeof predictionLocksAt === 'string' && predictionLocksAt) {
-    // datetime-local returns "YYYY-MM-DDTHH:MM" — expand to full ISO.
-    raw.predictionLocksAt =
-      predictionLocksAt.length === 16
-        ? `${predictionLocksAt}:00.000Z`
-        : predictionLocksAt
+    // The client converts the datetime-local wall time to a full ISO instant
+    // (new Date(value).toISOString()) before submitting, so no reinterpreting
+    // of local time as UTC happens here — z.iso.datetime() validates it.
+    raw.predictionLocksAt = predictionLocksAt
   }
   if (typeof status === 'string' && status) raw.status = status
 
@@ -53,7 +53,7 @@ export async function updateMovieAdminAction(
     }
   }
 
-  const update: Record<string, unknown> = {
+  const update: Database['public']['Tables']['movies']['Update'] = {
     updated_at: new Date().toISOString(),
   }
   if (parsed.data.imdbId !== undefined) update.imdb_id = parsed.data.imdbId
@@ -102,10 +102,15 @@ export async function settleMovieAction(
 ): Promise<ActionResult> {
   await requireAdmin()
 
+  const rawVotes = formData.get('officialNumVotes')
   const parsed = settlementSchema.safeParse({
     movieId: formData.get('movieId'),
     officialRating: Number(formData.get('officialRating')),
-    officialNumVotes: Number(formData.get('officialNumVotes')),
+    // Optional field: an empty input must become undefined, not NaN/0.
+    officialNumVotes:
+      typeof rawVotes === 'string' && rawVotes.trim() !== ''
+        ? Number(rawVotes)
+        : undefined,
     settlementSnapshotDate: formData.get('settlementSnapshotDate'),
     releaseDateUsed: formData.get('releaseDateUsed'),
     settlementNotes:

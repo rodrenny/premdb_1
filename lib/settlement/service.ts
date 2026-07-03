@@ -1,11 +1,10 @@
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import type { Movie } from '@/types'
-import { SETTLEMENT_WINDOW_DAYS } from './eligibility'
 
 export interface SettleMovieInput {
   movieId: string
   officialRating: number
-  officialNumVotes: number
+  officialNumVotes?: number | null
   settlementSnapshotDate: string // ISO date
   releaseDateUsed: string // ISO date
   settlementNotes?: string
@@ -20,12 +19,6 @@ export interface SettleMovieResult {
   error?: string
 }
 
-function addDaysISO(iso: string, days: number): string {
-  const d = new Date(iso)
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
-}
-
 /**
  * Settle a movie via the Postgres RPC `public.settle_movie`.
  *
@@ -35,13 +28,20 @@ function addDaysISO(iso: string, days: number): string {
  *  - flipping `movies.status` to 'settled'
  *  - creating one `score_events` row per existing prediction
  *
- * This keeps the whole write path atomic. Auth is enforced by the caller
- * (admin server action / admin route handler).
+ * This keeps the whole write path atomic.
+ *
+ * Uses the service-role client deliberately: this function is only ever
+ * invoked from `settleMovieAction` after `requireAdmin()`, which also accepts
+ * email-only admins (`ADMIN_EMAILS`) whose `profiles.role` is still 'user'.
+ * Those admins would fail the in-function role check added in migration 005
+ * if we called the RPC with the user-session client. The in-function check
+ * remains the guard against direct PostgREST calls; this app path is guarded
+ * by `requireAdmin()` instead.
  */
 export async function settleMovie(
   input: SettleMovieInput,
 ): Promise<SettleMovieResult> {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
 
   // Was the movie already settled before this call?
   const { data: priorSettlement } = await supabase
@@ -50,15 +50,14 @@ export async function settleMovie(
     .eq('movie_id', input.movieId)
     .maybeSingle()
 
-  const eligibleFromDate = addDaysISO(input.releaseDateUsed, SETTLEMENT_WINDOW_DAYS)
-
+  // eligible_from_date is computed inside the RPC (release_date_used + 28)
+  // since migration 007 — callers no longer supply it.
   const { data, error } = await supabase.rpc('settle_movie', {
     p_movie_id: input.movieId,
     p_official_rating: input.officialRating,
-    p_official_num_votes: input.officialNumVotes,
+    p_official_num_votes: input.officialNumVotes ?? null,
     p_settlement_snapshot_date: input.settlementSnapshotDate,
     p_release_date_used: input.releaseDateUsed,
-    p_eligible_from_date: eligibleFromDate,
     p_settlement_notes: input.settlementNotes ?? null,
     p_source_type: input.sourceType ?? 'manual',
     p_source_snapshot: input.sourceSnapshot ?? null,

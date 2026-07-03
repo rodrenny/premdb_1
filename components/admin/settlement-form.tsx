@@ -81,7 +81,7 @@ export function SettlementForm({ movie, alreadySettled }: Props) {
         </div>
         <div className="space-y-1">
           <Label htmlFor={`votes-${movie.id}`} className="text-xs">
-            Official num votes
+            Official num votes (optional)
           </Label>
           <Input
             id={`votes-${movie.id}`}
@@ -89,7 +89,6 @@ export function SettlementForm({ movie, alreadySettled }: Props) {
             type="number"
             min={0}
             step={1}
-            required
             disabled={alreadySettled}
           />
         </div>

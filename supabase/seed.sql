@@ -149,7 +149,9 @@ select
   m.id,
   7.4,
   8213,
-  (current_date - interval '31 days')::date,
+  -- Must be on/after eligible_from_date (release + 28 = 17 days ago) to
+  -- satisfy the settlements_snapshot_after_eligible constraint (007).
+  (current_date - interval '15 days')::date,
   m.release_date,
   (m.release_date + interval '28 days')::date,
   'v1',

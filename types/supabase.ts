@@ -5,8 +5,9 @@
 // (or `supabase gen types typescript --project-id <ref> > types/supabase.ts`
 // for remote projects).
 //
-// This hand-written version mirrors `supabase/migrations/001_initial.sql`
-// so the app is type-safe before you first run the generator.
+// This hand-written version mirrors the full migration chain in
+// `supabase/migrations/` (001 through 010) so the app is type-safe before
+// you first run the generator.
 
 export type Json =
   | string
@@ -26,6 +27,8 @@ export type MovieStatus =
 export type UserRole = 'user' | 'admin'
 
 export type SettlementSourceType = 'manual' | 'dataset' | 'api_import'
+
+export type RatingSnapshotSource = 'tmdb' | 'imdb'
 
 export interface Database {
   public: {
@@ -131,7 +134,7 @@ export interface Database {
           id: string
           movie_id: string
           official_rating: number
-          official_num_votes: number
+          official_num_votes: number | null
           settlement_snapshot_date: string
           settled_at: string
           release_date_used: string
@@ -145,7 +148,7 @@ export interface Database {
           id?: string
           movie_id: string
           official_rating: number
-          official_num_votes: number
+          official_num_votes?: number | null
           settlement_snapshot_date: string
           settled_at?: string
           release_date_used: string
@@ -156,6 +159,28 @@ export interface Database {
           settlement_notes?: string | null
         }
         Update: Partial<Database['public']['Tables']['settlements']['Insert']>
+        Relationships: []
+      }
+      rating_snapshots: {
+        Row: {
+          id: string
+          movie_id: string
+          source: RatingSnapshotSource
+          rating: number
+          num_votes: number | null
+          snapshot_date: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          movie_id: string
+          source?: RatingSnapshotSource
+          rating: number
+          num_votes?: number | null
+          snapshot_date: string
+          created_at?: string
+        }
+        Update: Partial<Database['public']['Tables']['rating_snapshots']['Insert']>
         Relationships: []
       }
       score_events: {
@@ -185,16 +210,34 @@ export interface Database {
         Relationships: []
       }
     }
-    Views: Record<string, never>
+    Views: { [_ in never]: never }
     Functions: {
+      get_prediction_consensus: {
+        Args: {
+          p_movie_id: string
+        }
+        Returns: {
+          bucket: number
+          count: number
+        }[]
+      }
+      get_prediction_stats: {
+        Args: {
+          p_movie_id: string
+        }
+        Returns: {
+          prediction_count: number
+          median: number
+          mean: number
+        }[]
+      }
       settle_movie: {
         Args: {
           p_movie_id: string
           p_official_rating: number
-          p_official_num_votes: number
+          p_official_num_votes?: number | null
           p_settlement_snapshot_date: string
           p_release_date_used: string
-          p_eligible_from_date: string
           p_settlement_notes?: string | null
           p_source_type?: string | null
           p_source_snapshot?: string | null
@@ -202,7 +245,7 @@ export interface Database {
         Returns: string
       }
     }
-    Enums: Record<string, never>
-    CompositeTypes: Record<string, never>
+    Enums: { [_ in never]: never }
+    CompositeTypes: { [_ in never]: never }
   }
 }

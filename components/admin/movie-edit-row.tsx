@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { getMovieDisplayState } from '@/lib/movies/display'
+import { toLocalDatetimeInputValue } from '@/lib/utils'
 import { MovieStatusBadge } from '@/components/movies/movie-status-badge'
 import {
   markMovieCanceledAction,
@@ -20,17 +21,17 @@ const STATUSES = [
   'canceled',
 ] as const
 
-function toDateTimeLocal(iso: string | null): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
-}
-
 export function MovieEditRow({ movie }: { movie: Movie }) {
   const state = getMovieDisplayState(movie)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [pending, startTransition] = useTransition()
+  // datetime-local values are wall time in the admin's zone. Keep the raw
+  // input value in state and submit the UTC instant via a hidden field, so
+  // the server never has to guess the admin's time zone.
+  const [lockLocal, setLockLocal] = useState(
+    toLocalDatetimeInputValue(movie.prediction_locks_at),
+  )
+  const lockIso = lockLocal ? new Date(lockLocal).toISOString() : ''
 
   const runAction = (
     action: (fd: FormData) => Promise<{ ok: boolean; error?: string; message?: string }>,
@@ -86,14 +87,15 @@ export function MovieEditRow({ movie }: { movie: Movie }) {
         </div>
         <div className="space-y-1">
           <Label htmlFor={`lock-${movie.id}`} className="text-xs">
-            Prediction locks at (UTC)
+            Prediction locks at (your local time)
           </Label>
           <Input
             id={`lock-${movie.id}`}
-            name="predictionLocksAt"
             type="datetime-local"
-            defaultValue={toDateTimeLocal(movie.prediction_locks_at)}
+            value={lockLocal}
+            onChange={(e) => setLockLocal(e.target.value)}
           />
+          <input type="hidden" name="predictionLocksAt" value={lockIso} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`status-${movie.id}`} className="text-xs">

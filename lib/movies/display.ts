@@ -30,7 +30,9 @@ export function isPredictionOpen(
 
 export function parseGenres(raw: Movie['genres']): Genre[] {
   if (!Array.isArray(raw)) return []
-  return raw.filter(
+  // Json[] and Genre are structurally disjoint for TS (index signatures), so
+  // widen to unknown before narrowing with the runtime shape check.
+  return (raw as unknown[]).filter(
     (g): g is Genre =>
       !!g && typeof g === 'object' && 'id' in g && 'name' in g,
   )
@@ -38,7 +40,7 @@ export function parseGenres(raw: Movie['genres']): Genre[] {
 
 export function parseCast(raw: Movie['cast_preview']): CastMember[] {
   if (!Array.isArray(raw)) return []
-  return raw.filter(
+  return (raw as unknown[]).filter(
     (c): c is CastMember =>
       !!c && typeof c === 'object' && 'name' in c && 'character' in c,
   )

@@ -1,14 +1,16 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { SETTLEMENT_WINDOW_DAYS } from '@/lib/settlement/eligibility'
+import {
+  runAutoSettlePhase,
+  runSnapshotPhase,
+} from '@/lib/settlement/auto'
 
 export const dynamic = 'force-dynamic'
 
 interface TransitionResult {
   upcomingToWaiting: number
   waitingToAwaiting: number
-  autoSettled: number
-  autoSkipped: number
   errors: string[]
 }
 
@@ -18,31 +20,36 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-function addDaysISO(iso: string, days: number): string {
-  const d = new Date(iso)
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
-}
-
 /**
- * Lifecycle cron. Date-driven transitions + optional auto-settle when a
- * trusted rating snapshot is already present.
+ * Lifecycle cron, in three phases:
  *
- *   upcoming                → released_waiting_window   (release_date <= today)
- *   released_waiting_window → awaiting_review           (release_date <= today - 28)
+ * 1. Date-driven status transitions:
+ *      upcoming                → released_waiting_window (release_date <= today)
+ *      released_waiting_window → awaiting_review         (release_date <= today - 28)
+ * 2. Snapshot phase: record today's TMDb rating for every movie in
+ *    released_waiting_window / awaiting_review (skipping low-quality data,
+ *    capped at 100 TMDb calls per run).
+ * 3. Auto-settle phase: settle each awaiting_review movie from the earliest
+ *    rating snapshot taken on or after release + 28 — the settlement
+ *    contract, literally.
+ *
+ * The old auto-settle from movies.tmdb_*_snapshot columns was removed: those
+ * columns were written during TMDb sync of *upcoming* movies, i.e. usually
+ * pre-release with vote_average = 0, so settling from them violated the
+ * contract.
  *
  * Idempotent: re-running produces no new side effects once a movie is in its
- * correct state.
+ * correct state (snapshots conflict on (movie_id, source, snapshot_date);
+ * settle_movie returns the existing settlement id).
  *
  * Auth: requires `Authorization: Bearer ${CRON_SECRET}`.
  */
-async function runTransitions(): Promise<TransitionResult> {
-  const supabase = createServiceClient()
+async function runTransitions(
+  supabase: ReturnType<typeof createServiceClient>,
+): Promise<TransitionResult> {
   const result: TransitionResult = {
     upcomingToWaiting: 0,
     waitingToAwaiting: 0,
-    autoSettled: 0,
-    autoSkipped: 0,
     errors: [],
   }
 
@@ -75,58 +82,6 @@ async function runTransitions(): Promise<TransitionResult> {
     else result.waitingToAwaiting = data?.length ?? 0
   }
 
-  // Auto-settle day-28+ movies when snapshot data is available.
-  {
-    const { data: candidates, error } = await supabase
-      .from('movies')
-      .select(
-        'id, release_date, tmdb_rating_snapshot, tmdb_num_votes_snapshot, tmdb_snapshot_date',
-      )
-      .eq('status', 'awaiting_review')
-      .not('release_date', 'is', null)
-      .lte('release_date', settlementWindowDaysAgo)
-
-    if (error) {
-      result.errors.push(`auto-settle (query): ${error.message}`)
-    } else {
-      for (const movie of candidates ?? []) {
-        const releaseDate = movie.release_date
-        const rating = movie.tmdb_rating_snapshot
-        const votes = movie.tmdb_num_votes_snapshot
-        const snapshotDate = movie.tmdb_snapshot_date
-
-        if (
-          !releaseDate ||
-          typeof rating !== 'number' ||
-          typeof votes !== 'number' ||
-          !snapshotDate
-        ) {
-          result.autoSkipped += 1
-          continue
-        }
-
-        const eligibleFromDate = addDaysISO(releaseDate, SETTLEMENT_WINDOW_DAYS)
-        const { error: settleErr } = await supabase.rpc('settle_movie', {
-          p_movie_id: movie.id,
-          p_official_rating: rating,
-          p_official_num_votes: votes,
-          p_settlement_snapshot_date: snapshotDate,
-          p_release_date_used: releaseDate,
-          p_eligible_from_date: eligibleFromDate,
-          p_settlement_notes: 'Auto-settled by cron from TMDb snapshot.',
-          p_source_type: 'api_import',
-          p_source_snapshot: `tmdb:${snapshotDate}`,
-        })
-
-        if (settleErr) {
-          result.errors.push(`auto-settle (${movie.id}): ${settleErr.message}`)
-        } else {
-          result.autoSettled += 1
-        }
-      }
-    }
-  }
-
   return result
 }
 
@@ -142,8 +97,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    const result = await runTransitions()
-    return NextResponse.json({ ok: true, result })
+    const supabase = createServiceClient()
+    const transitions = await runTransitions(supabase)
+    const snapshots = await runSnapshotPhase(supabase)
+    const autoSettle = await runAutoSettlePhase(supabase)
+
+    return NextResponse.json({
+      ok: true,
+      result: {
+        upcomingToWaiting: transitions.upcomingToWaiting,
+        waitingToAwaiting: transitions.waitingToAwaiting,
+        snapshotsInserted: snapshots.snapshotsInserted,
+        snapshotSkipped: snapshots.snapshotSkipped,
+        tmdbCalls: snapshots.tmdbCalls,
+        settledFromSnapshot: autoSettle.settledFromSnapshot,
+        awaitingSnapshot: autoSettle.awaitingSnapshot,
+        errors: [
+          ...transitions.errors,
+          ...snapshots.errors,
+          ...autoSettle.errors,
+        ],
+      },
+    })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unknown error'
     return NextResponse.json({ ok: false, error: message }, { status: 500 })

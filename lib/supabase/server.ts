@@ -1,13 +1,24 @@
-import { createServerClient } from '@supabase/ssr'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { createClient as createSupabaseJsClient } from '@supabase/supabase-js'
+import {
+  createClient as createSupabaseJsClient,
+  type SupabaseClient,
+} from '@supabase/supabase-js'
 import type { Database } from '@/types/supabase'
+
+type CookieToSet = { name: string; value: string; options: CookieOptions }
 
 /**
  * Request-scoped Supabase client for server components, server actions, and
  * route handlers. Session cookies are refreshed automatically.
+ *
+ * The return type is asserted to supabase-js's own `SupabaseClient<Database>`:
+ * `@supabase/ssr@0.5.x` still instantiates the client type with the old
+ * three-generic parameter order, which collapses every typed query to `never`
+ * against `supabase-js@2.10x`. The runtime object is exactly the same client,
+ * only the declared generics are stale.
  */
-export async function createClient() {
+export async function createClient(): Promise<SupabaseClient<Database>> {
   const cookieStore = await cookies()
 
   return createServerClient<Database>(
@@ -18,7 +29,7 @@ export async function createClient() {
         getAll() {
           return cookieStore.getAll()
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options),
@@ -31,7 +42,7 @@ export async function createClient() {
         },
       },
     },
-  )
+  ) as unknown as SupabaseClient<Database>
 }
 
 /**
@@ -39,7 +50,7 @@ export async function createClient() {
  * you have verified the caller is authorized (e.g. cron endpoints with a
  * shared secret, or after `requireAdmin()`).
  */
-export function createServiceClient() {
+export function createServiceClient(): SupabaseClient<Database> {
   return createSupabaseJsClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
