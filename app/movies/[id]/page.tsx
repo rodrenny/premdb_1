@@ -14,6 +14,7 @@ import { MovieStatusBadge } from '@/components/movies/movie-status-badge'
 import { PredictionForm } from '@/components/predictions/prediction-form'
 import { SettlementRuleBox } from '@/components/movies/settlement-rule'
 import { ConsensusPanel } from '@/components/movies/consensus-panel'
+import { MarqueeNumber } from '@/components/movies/marquee-number'
 import { SettlementCountdown } from '@/components/movies/settlement-countdown'
 import { Button } from '@/components/ui/button'
 import {
@@ -86,9 +87,9 @@ export default async function MovieDetailPage({ params }: PageProps) {
               fill
               priority
               sizes="100vw"
-              className="-z-10 object-cover opacity-30"
+              className="-z-10 scale-105 object-cover opacity-25 blur-sm"
             />
-            <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background via-background/80 to-background/20" />
+            <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background via-background/85 to-background/30" />
           </>
         ) : null}
         <div className="container grid gap-8 py-10 md:grid-cols-[220px_1fr]">
@@ -115,7 +116,9 @@ export default async function MovieDetailPage({ params }: PageProps) {
                 </span>
               ))}
             </div>
-            <h1 className="text-4xl font-bold tracking-tight">{movie.title}</h1>
+            <h1 className="font-display text-4xl uppercase leading-[0.95] tracking-tight md:text-5xl">
+              {movie.title}
+            </h1>
             {movie.original_title && movie.original_title !== movie.title ? (
               <p className="text-sm text-muted-foreground">
                 {movie.original_title}
@@ -188,24 +191,8 @@ export default async function MovieDetailPage({ params }: PageProps) {
         </div>
 
         <aside className="space-y-4">
-          <SettlementRuleBox />
-
-          {/* Renders nothing outside released_waiting_window / awaiting_review. */}
-          <SettlementCountdown movie={movie} />
-
-          {/* Community consensus is only revealed after predictions lock —
-              the SQL functions enforce the gates; this condition just avoids
-              a pointless RPC round-trip for open movies. */}
-          {state !== 'open' ? (
-            <ConsensusPanel
-              movieId={movie.id}
-              userPrediction={
-                prediction ? Number(prediction.predicted_value) : null
-              }
-            />
-          ) : null}
-
-          <Card>
+          {/* The centerpiece: the viewer's number, entered or revealed. */}
+          <Card className="border-primary/20">
             <CardHeader>
               <CardTitle>
                 {settlement ? 'Settlement' : 'Your prediction'}
@@ -227,65 +214,76 @@ export default async function MovieDetailPage({ params }: PageProps) {
                   existingValue={prediction?.predicted_value ?? null}
                 />
               ) : state === 'locked' ? (
-                <div className="space-y-2 text-sm">
-                  <p className="text-muted-foreground">
-                    Predictions closed on {formatDateTime(movie.prediction_locks_at)}.
-                  </p>
+                <div className="space-y-3 text-sm">
                   {prediction ? (
-                    <p>
-                      You predicted{' '}
-                      <span className="font-semibold">
-                        {prediction.predicted_value.toFixed(1)}
-                      </span>
-                      .
-                    </p>
+                    <div className="text-center">
+                      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                        You predicted
+                      </p>
+                      <MarqueeNumber
+                        value={Number(prediction.predicted_value)}
+                        className="text-glow text-6xl"
+                      />
+                    </div>
                   ) : (
                     <p>You did not submit a prediction.</p>
                   )}
+                  <p className="text-muted-foreground">
+                    Predictions closed on {formatDateTime(movie.prediction_locks_at)}.
+                  </p>
                 </div>
               ) : settlement ? (
-                <div className="space-y-3 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">Official IMDb rating</p>
-                    <p className="text-2xl font-bold">
-                      {settlement.official_rating.toFixed(1)}
-                      {settlement.official_num_votes != null ? (
-                        <span className="ml-2 text-xs font-normal text-muted-foreground">
-                          ({settlement.official_num_votes.toLocaleString()} votes)
-                        </span>
-                      ) : null}
+                <div className="space-y-4 text-sm">
+                  <div className="text-center">
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      Official IMDb rating
                     </p>
+                    <MarqueeNumber
+                      value={settlement.official_rating}
+                      countUp
+                      className="text-glow text-6xl"
+                    />
+                    {settlement.official_num_votes != null ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {settlement.official_num_votes.toLocaleString()} votes
+                      </p>
+                    ) : null}
                   </div>
-                  {prediction ? (
-                    <div>
-                      <p className="text-muted-foreground">Your prediction</p>
-                      <p className="text-xl font-semibold">
-                        {prediction.predicted_value.toFixed(1)}
-                      </p>
-                    </div>
-                  ) : null}
-                  {scoreEvent ? (
-                    <div>
-                      <p className="text-muted-foreground">Points earned</p>
-                      <p className="text-xl font-semibold text-primary">
-                        +{scoreEvent.points}
-                      </p>
-                    </div>
-                  ) : null}
+                  <div className="grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+                    {prediction ? (
+                      <div>
+                        <p className="text-muted-foreground">Your prediction</p>
+                        <p className="num text-xl font-semibold">
+                          {prediction.predicted_value.toFixed(1)}
+                        </p>
+                      </div>
+                    ) : null}
+                    {scoreEvent ? (
+                      <div>
+                        <p className="text-muted-foreground">Points earned</p>
+                        <p className="num text-xl font-semibold text-settle">
+                          +{scoreEvent.points}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     Settled on {formatDate(settlement.settlement_snapshot_date)}.
                   </p>
                 </div>
               ) : (
-                <div className="space-y-2 text-sm text-muted-foreground">
+                <div className="space-y-3 text-sm text-muted-foreground">
                   {prediction ? (
-                    <p>
-                      You predicted{' '}
-                      <span className="font-semibold text-foreground">
-                        {prediction.predicted_value.toFixed(1)}
-                      </span>
-                      . Waiting for settlement.
-                    </p>
+                    <div className="text-center">
+                      <p className="text-xs uppercase tracking-[0.2em]">
+                        You predicted
+                      </p>
+                      <MarqueeNumber
+                        value={Number(prediction.predicted_value)}
+                        className="text-glow text-6xl"
+                      />
+                      <p className="mt-1">Waiting for settlement.</p>
+                    </div>
                   ) : (
                     <p>Predictions are closed and the movie has not settled yet.</p>
                   )}
@@ -293,6 +291,23 @@ export default async function MovieDetailPage({ params }: PageProps) {
               )}
             </CardContent>
           </Card>
+
+          {/* Community consensus is only revealed after predictions lock —
+              the SQL functions enforce the gates; this condition just avoids
+              a pointless RPC round-trip for open movies. */}
+          {state !== 'open' ? (
+            <ConsensusPanel
+              movieId={movie.id}
+              userPrediction={
+                prediction ? Number(prediction.predicted_value) : null
+              }
+            />
+          ) : null}
+
+          {/* Renders nothing outside released_waiting_window / awaiting_review. */}
+          <SettlementCountdown movie={movie} />
+
+          <SettlementRuleBox />
         </aside>
       </section>
     </main>

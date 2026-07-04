@@ -49,10 +49,10 @@ export async function SettlementCountdown({ movie }: Props) {
             <p className="text-muted-foreground">
               Latest rating snapshot ({snapshot.snapshot_date})
             </p>
-            <p className="text-2xl font-bold">
+            <p className="num text-2xl font-semibold">
               {Number(snapshot.rating).toFixed(1)}
               {snapshot.num_votes != null ? (
-                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                <span className="ml-2 font-sans text-xs font-normal text-muted-foreground">
                   ({snapshot.num_votes.toLocaleString()} votes)
                 </span>
               ) : null}

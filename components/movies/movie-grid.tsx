@@ -5,7 +5,7 @@ export function MovieGrid({ movies }: { movies: Movie[] }) {
   if (movies.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border/60 p-10 text-center text-sm text-muted-foreground">
-        No movies yet.
+        No movies yet — check back soon.
       </div>
     )
   }

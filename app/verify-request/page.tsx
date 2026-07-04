@@ -16,10 +16,13 @@ export default async function VerifyRequestPage({
   const { email } = await searchParams
 
   return (
-    <main className="container flex min-h-[calc(100vh-8rem)] items-center justify-center py-12">
+    <main className="relative isolate flex min-h-[calc(100vh-8rem)] items-center justify-center overflow-hidden px-6 py-12">
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,hsl(var(--primary)/0.1),transparent_55%)]" />
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Check your email</CardTitle>
+          <CardTitle className="font-display text-2xl uppercase tracking-wide">
+            Check your email
+          </CardTitle>
           <CardDescription>
             {email ? (
               <>

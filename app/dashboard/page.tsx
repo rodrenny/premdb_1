@@ -1,9 +1,11 @@
+import Image from 'next/image'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { formatDate, formatDateTime } from '@/lib/utils'
-import { getMovieDisplayState } from '@/lib/movies/display'
+import { getMovieDisplayState, posterUrl } from '@/lib/movies/display'
 import { MovieStatusBadge } from '@/components/movies/movie-status-badge'
+import { MarqueeNumber } from '@/components/movies/marquee-number'
 import { UsernameForm } from '@/components/dashboard/username-form'
 import { EmailPrefsForm } from '@/components/dashboard/email-prefs-form'
 import {
@@ -91,7 +93,9 @@ export default async function DashboardPage() {
     <main className="container space-y-8 py-10">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="font-display text-4xl uppercase tracking-tight">
+            Dashboard
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Signed in as {user.email}
             {profile?.username ? ` · @${profile.username}` : ''}
@@ -102,7 +106,7 @@ export default async function DashboardPage() {
             <span className="text-xs uppercase tracking-wide text-muted-foreground">
               Total points
             </span>
-            <span className="text-3xl font-bold text-primary">{totalPoints}</span>
+            <MarqueeNumber value={totalPoints} decimals={0} className="text-glow text-3xl" />
           </CardContent>
         </Card>
       </header>
@@ -147,7 +151,7 @@ export default async function DashboardPage() {
           {activePicks.length === 0 ? (
             <EmptyState
               title="No active picks"
-              description="Head to the movies list and submit a prediction."
+              description="No predictions yet — pick a movie."
               ctaHref="/movies"
               ctaLabel="Browse movies"
             />
@@ -159,26 +163,37 @@ export default async function DashboardPage() {
                   status: m.status as 'upcoming',
                   prediction_locks_at: m.prediction_locks_at,
                 })
+                const poster = posterUrl(m.poster_path)
                 return (
                   <li key={p.movie_id} className="flex items-center justify-between gap-4 p-4">
-                    <div className="min-w-0">
-                      <Link
-                        href={`/movies/${m.id}`}
-                        className="font-medium hover:underline"
-                      >
-                        {m.title}
-                      </Link>
-                      <p className="text-xs text-muted-foreground">
-                        Release {formatDate(m.release_date)} · Locks{' '}
-                        {formatDateTime(m.prediction_locks_at)}
-                      </p>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="relative h-16 w-11 shrink-0 overflow-hidden rounded-sm border border-border/60 bg-card">
+                        {poster ? (
+                          <Image
+                            src={poster}
+                            alt={`${m.title} poster`}
+                            fill
+                            sizes="44px"
+                            className="object-cover"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="min-w-0">
+                        <Link
+                          href={`/movies/${m.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {m.title}
+                        </Link>
+                        <p className="text-xs text-muted-foreground">
+                          Release {formatDate(m.release_date)} · Locks{' '}
+                          {formatDateTime(m.prediction_locks_at)}
+                        </p>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-sm">
-                        Predicted{' '}
-                        <span className="font-semibold">
-                          {Number(p.predicted_value).toFixed(1)}
-                        </span>
+                    <div className="flex shrink-0 items-center gap-4">
+                      <span className="num text-2xl font-semibold text-primary">
+                        {Number(p.predicted_value).toFixed(1)}
                       </span>
                       <MovieStatusBadge state={state} />
                     </div>
@@ -197,35 +212,47 @@ export default async function DashboardPage() {
             />
           ) : (
             <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
-              {scoreEvents.map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-4 p-4">
-                  <div className="min-w-0">
-                    <Link
-                      href={`/movies/${s.movie_id}`}
-                      className="font-medium hover:underline"
-                    >
-                      {s.movie_title_snapshot ?? 'Movie'}
-                    </Link>
-                    <p className="text-xs text-muted-foreground">
-                      Settled {formatDate(s.settlement_snapshot_date)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-6 text-sm">
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">You / actual</p>
-                      <p>
-                        {Number(s.prediction_value).toFixed(1)} ·{' '}
-                        <span className="font-semibold">
-                          {Number(s.official_value).toFixed(1)}
-                        </span>
+              {scoreEvents.map((s) => {
+                const delta =
+                  Number(s.official_value) - Number(s.prediction_value)
+                return (
+                  <li key={s.id} className="flex items-center justify-between gap-4 p-4">
+                    <div className="min-w-0">
+                      <Link
+                        href={`/movies/${s.movie_id}`}
+                        className="font-medium hover:underline"
+                      >
+                        {s.movie_title_snapshot ?? 'Movie'}
+                      </Link>
+                      <p className="text-xs text-muted-foreground">
+                        Settled {formatDate(s.settlement_snapshot_date)}
                       </p>
                     </div>
-                    <span className="text-lg font-bold text-primary">
-                      +{s.points}
-                    </span>
-                  </div>
-                </li>
-              ))}
+                    <div className="flex shrink-0 items-center gap-5 text-sm">
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">
+                          You / official
+                        </p>
+                        <p className="num">
+                          {Number(s.prediction_value).toFixed(1)} /{' '}
+                          <MarqueeNumber
+                            value={Number(s.official_value)}
+                            countUp
+                            className="text-base"
+                          />
+                        </p>
+                        <p className="num text-xs text-muted-foreground">
+                          {delta >= 0 ? '+' : '−'}
+                          {Math.abs(delta).toFixed(1)} off
+                        </p>
+                      </div>
+                      <span className="num text-lg font-semibold text-settle">
+                        +{s.points}
+                      </span>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </TabsContent>

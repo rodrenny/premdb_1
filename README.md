@@ -93,8 +93,13 @@ formula — keep them in sync if you change one.
 | Cron | One authenticated route handler for lifecycle transitions |
 | Tests | Vitest (unit + live-DB integration) |
 
-No Prisma. No Auth.js. No route groups. Dark mode by default. RLS enabled on
-every table.
+No Prisma. No Auth.js. No route groups. RLS enabled on every table.
+
+The UI ships **dark-only** — one theme, defined as CSS variables in
+`app/globals.css` and mapped through the Tailwind/shadcn token layer. There is
+no light theme and no theme toggle. Fonts (Anton for display, Inter for body,
+IBM Plex Mono for numerals) load via `next/font/google` — no extra
+dependencies.
 
 ---
 
