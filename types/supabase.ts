@@ -6,7 +6,7 @@
 // for remote projects).
 //
 // This hand-written version mirrors the full migration chain in
-// `supabase/migrations/` (001 through 010) so the app is type-safe before
+// `supabase/migrations/` (001 through 015) so the app is type-safe before
 // you first run the generator.
 
 export type Json =
@@ -49,18 +49,21 @@ export interface Database {
         Row: {
           id: string
           username: string | null
+          email_opt_out: boolean
           created_at: string
           updated_at: string
         }
         Insert: {
           id: string
           username?: string | null
+          email_opt_out?: boolean
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
           username?: string | null
+          email_opt_out?: boolean
           created_at?: string
           updated_at?: string
         }

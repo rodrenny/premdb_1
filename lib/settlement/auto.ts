@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/supabase'
 import { tmdbFetch, type TMDbMovie } from '@/lib/tmdb/client'
+import {
+  sendSettlementEmails,
+  type SendSettlementEmailsResult,
+} from '@/lib/email/settlement'
 import { SETTLEMENT_WINDOW_DAYS } from './eligibility'
 
 /**
@@ -26,12 +30,18 @@ export interface SnapshotPhaseResult {
 export interface AutoSettlePhaseResult {
   settledFromSnapshot: number
   awaitingSnapshot: number
+  emailsSent: number
+  emailsFailed: number
   errors: string[]
 }
 
 export type RatingFetcher = (
   tmdbId: number,
 ) => Promise<{ rating: number; numVotes: number }>
+
+export type SettlementEmailSender = (
+  movieId: string,
+) => Promise<SendSettlementEmailsResult>
 
 async function fetchTmdbRating(
   tmdbId: number,
@@ -135,10 +145,13 @@ export async function runSnapshotPhase(
  */
 export async function runAutoSettlePhase(
   supabase: SupabaseClient<Database>,
+  sendEmails: SettlementEmailSender = sendSettlementEmails,
 ): Promise<AutoSettlePhaseResult> {
   const result: AutoSettlePhaseResult = {
     settledFromSnapshot: 0,
     awaitingSnapshot: 0,
+    emailsSent: 0,
+    emailsFailed: 0,
     errors: [],
   }
 
@@ -187,8 +200,22 @@ export async function runAutoSettlePhase(
 
     if (settleErr) {
       result.errors.push(`auto-settle (${movie.id}): ${settleErr.message}`)
-    } else {
-      result.settledFromSnapshot += 1
+      continue
+    }
+    result.settledFromSnapshot += 1
+
+    // Fire-and-forget contract: the settlement above is already committed,
+    // so an email failure is only counted and logged — it must never fail
+    // the phase or undo the settlement. Awaited only to collect counters.
+    try {
+      const emails = await sendEmails(movie.id)
+      result.emailsSent += emails.sent
+      result.emailsFailed += emails.failed
+    } catch (e) {
+      result.emailsFailed += 1
+      result.errors.push(
+        `email (${movie.id}): ${e instanceof Error ? e.message : 'Unknown error'}`,
+      )
     }
   }
 

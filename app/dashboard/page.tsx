@@ -5,6 +5,7 @@ import { formatDate, formatDateTime } from '@/lib/utils'
 import { getMovieDisplayState } from '@/lib/movies/display'
 import { MovieStatusBadge } from '@/components/movies/movie-status-badge'
 import { UsernameForm } from '@/components/dashboard/username-form'
+import { EmailPrefsForm } from '@/components/dashboard/email-prefs-form'
 import {
   Card,
   CardContent,
@@ -50,7 +51,7 @@ export default async function DashboardPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, username')
+    .select('id, username, email_opt_out')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -114,8 +115,9 @@ export default async function DashboardPage() {
               Set your username to appear on the leaderboard.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             <UsernameForm initialUsername={profile?.username ?? null} />
+            <EmailPrefsForm initialOptOut={profile?.email_opt_out ?? false} />
           </CardContent>
         </Card>
       ) : (
@@ -124,8 +126,9 @@ export default async function DashboardPage() {
             <CardTitle>Profile</CardTitle>
             <CardDescription>Update your display name.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             <UsernameForm initialUsername={profile.username} />
+            <EmailPrefsForm initialOptOut={profile.email_opt_out} />
           </CardContent>
         </Card>
       )}

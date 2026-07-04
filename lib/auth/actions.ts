@@ -3,7 +3,11 @@
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
-import { emailSchema, usernameSchema } from '@/lib/validations'
+import {
+  emailOptOutSchema,
+  emailSchema,
+  usernameSchema,
+} from '@/lib/validations'
 
 export async function signInWithMagicLinkAction(formData: FormData) {
   const parsed = emailSchema.safeParse({ email: formData.get('email') })
@@ -71,6 +75,42 @@ export async function updateUsernameAction(formData: FormData) {
     if (error.code === '23505') {
       return { ok: false as const, error: 'That username is already taken.' }
     }
+    return { ok: false as const, error: error.message }
+  }
+
+  return { ok: true as const }
+}
+
+export async function updateEmailOptOutAction(formData: FormData) {
+  const raw = formData.get('emailOptOut')
+  const parsed = emailOptOutSchema.safeParse({
+    emailOptOut: raw === 'true' ? true : raw === 'false' ? false : raw,
+  })
+  if (!parsed.success) {
+    return { ok: false as const, error: 'Invalid value.' }
+  }
+
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { ok: false as const, error: 'Not signed in.' }
+  }
+
+  // Writes through the user's own session: the row policy limits it to their
+  // row and migration 015's column grant to (username, updated_at,
+  // email_opt_out).
+  const { error } = await supabase
+    .from('profiles')
+    .update({
+      email_opt_out: parsed.data.emailOptOut,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', user.id)
+
+  if (error) {
     return { ok: false as const, error: error.message }
   }
 
