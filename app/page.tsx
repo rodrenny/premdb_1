@@ -29,12 +29,12 @@ export default async function HomePage() {
     <main>
       {/* Hero */}
       <section className="relative isolate overflow-hidden border-b border-border/60">
-        <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,hsl(47_96%_53%/0.12),transparent_60%)]" />
+        <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,hsl(var(--primary)/0.14),transparent_60%)]" />
         <div className="container flex flex-col items-start gap-6 py-20 md:py-28">
           <span className="rounded-full border border-border/60 bg-muted/50 px-3 py-1 text-xs uppercase tracking-wide text-muted-foreground">
             Predict before release
           </span>
-          <h1 className="max-w-3xl text-5xl font-bold tracking-tight md:text-6xl">
+          <h1 className="max-w-3xl font-display text-5xl uppercase leading-[0.95] tracking-tight md:text-7xl">
             Call the IMDb rating before the critics do.
           </h1>
           <p className="max-w-2xl text-lg text-muted-foreground">
@@ -58,19 +58,21 @@ export default async function HomePage() {
       {/* How it works */}
       <section className="container grid gap-8 py-16 md:grid-cols-[1fr_360px]">
         <div className="space-y-4">
-          <h2 className="text-2xl font-semibold tracking-tight">How it works</h2>
+          <h2 className="font-display text-2xl uppercase tracking-wide">
+            How it works
+          </h2>
           <ol className="space-y-3 text-sm text-muted-foreground">
             <li>
-              <span className="mr-2 font-semibold text-foreground">1.</span>
+              <span className="num mr-2 font-semibold text-primary">1</span>
               Pick an upcoming movie from the grid.
             </li>
             <li>
-              <span className="mr-2 font-semibold text-foreground">2.</span>
+              <span className="num mr-2 font-semibold text-primary">2</span>
               Submit a prediction between 1.0 and 10.0 before the prediction lock
               time.
             </li>
             <li>
-              <span className="mr-2 font-semibold text-foreground">3.</span>
+              <span className="num mr-2 font-semibold text-primary">3</span>
               Once the movie settles, you earn points based on how close you were:
               100 minus 20 per point of error, with a +10 bonus for an exact match.
             </li>
@@ -82,7 +84,9 @@ export default async function HomePage() {
       {/* Featured movies */}
       <section className="container space-y-4 py-8">
         <div className="flex items-end justify-between">
-          <h2 className="text-2xl font-semibold tracking-tight">Upcoming</h2>
+          <h2 className="font-display text-2xl uppercase tracking-wide">
+            Upcoming
+          </h2>
           <Link
             href="/movies"
             className="text-sm text-muted-foreground hover:text-foreground"
@@ -97,14 +101,18 @@ export default async function HomePage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No upcoming movies yet.</p>
+          <p className="text-sm text-muted-foreground">
+            No upcoming movies yet — check back soon.
+          </p>
         )}
       </section>
 
       {/* Leaderboard preview */}
       <section className="container space-y-4 py-16">
         <div className="flex items-end justify-between">
-          <h2 className="text-2xl font-semibold tracking-tight">Top players</h2>
+          <h2 className="font-display text-2xl uppercase tracking-wide">
+            Top players
+          </h2>
           <Link
             href="/leaderboard"
             className="text-sm text-muted-foreground hover:text-foreground"

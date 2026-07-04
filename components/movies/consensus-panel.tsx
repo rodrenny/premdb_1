@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import { comparisonText } from '@/lib/predictions/consensus'
+import { bucketFor, comparisonText } from '@/lib/predictions/consensus'
+import { MarqueeNumber } from '@/components/movies/marquee-number'
 import {
   Card,
   CardContent,
@@ -36,6 +37,7 @@ export async function ConsensusPanel({ movieId, userPrediction }: Props) {
 
   const maxCount = Math.max(...buckets.map((b) => b.count))
   const medianValue = Number(stats.median)
+  const userBucket = userPrediction != null ? bucketFor(userPrediction) : null
 
   return (
     <Card>
@@ -44,7 +46,7 @@ export async function ConsensusPanel({ movieId, userPrediction }: Props) {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-baseline gap-3">
-          <p className="text-2xl font-bold">{medianValue.toFixed(1)}</p>
+          <MarqueeNumber value={medianValue} className="text-glow text-3xl" />
           <p className="text-xs text-muted-foreground">
             median of {stats.prediction_count} prediction
             {stats.prediction_count === 1 ? '' : 's'}
@@ -52,18 +54,23 @@ export async function ConsensusPanel({ movieId, userPrediction }: Props) {
         </div>
 
         <ul className="space-y-1">
-          {buckets.map((b) => (
-            <li key={b.bucket} className="flex items-center gap-2 text-xs">
-              <span className="w-8 shrink-0 text-right text-muted-foreground">
-                {Number(b.bucket).toFixed(1)}
-              </span>
-              <span
-                className="h-3 rounded-sm bg-primary/70"
-                style={{ width: `${(b.count / maxCount) * 100}%` }}
-              />
-              <span className="text-muted-foreground">{b.count}</span>
-            </li>
-          ))}
+          {buckets.map((b) => {
+            const mine = userBucket != null && Number(b.bucket) === userBucket
+            return (
+              <li key={b.bucket} className="flex items-center gap-2 text-xs">
+                <span className="num w-8 shrink-0 text-right text-muted-foreground">
+                  {Number(b.bucket).toFixed(1)}
+                </span>
+                <span
+                  className={`h-3 rounded-sm ${
+                    mine ? 'bg-primary' : 'bg-muted-foreground/40'
+                  }`}
+                  style={{ width: `${(b.count / maxCount) * 100}%` }}
+                />
+                <span className="num text-muted-foreground">{b.count}</span>
+              </li>
+            )
+          })}
         </ul>
 
         {userPrediction != null ? (

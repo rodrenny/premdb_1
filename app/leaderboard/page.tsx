@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
 import { getLeaderboard } from '@/lib/leaderboard/service'
 import { LeaderboardTable } from '@/components/leaderboard/leaderboard-table'
 import type { LeaderboardRange } from '@/types'
@@ -23,12 +24,20 @@ function parseRange(raw: string | undefined): LeaderboardRange {
 export default async function LeaderboardPage({ searchParams }: PageProps) {
   const { range: rawRange } = await searchParams
   const range = parseRange(rawRange)
-  const result = await getLeaderboard(range)
+  const supabase = await createClient()
+  const [result, userRes] = await Promise.all([
+    getLeaderboard(range),
+    supabase.auth.getUser(),
+  ])
+  // Session read only — powers the "your row" highlight in the table.
+  const currentUserId = userRes.data.user?.id ?? null
 
   return (
     <main className="container space-y-6 py-10">
       <header>
-        <h1 className="text-3xl font-bold tracking-tight">Leaderboard</h1>
+        <h1 className="font-display text-4xl uppercase tracking-tight">
+          Leaderboard
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Global ranking by points earned on settled movies.
         </p>
@@ -54,7 +63,7 @@ export default async function LeaderboardPage({ searchParams }: PageProps) {
       </nav>
 
       {result.ok ? (
-        <LeaderboardTable entries={result.entries} />
+        <LeaderboardTable entries={result.entries} currentUserId={currentUserId} />
       ) : (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-sm">
           <p className="font-medium">Couldn&apos;t load the leaderboard.</p>

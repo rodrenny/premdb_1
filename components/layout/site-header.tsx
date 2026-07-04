@@ -13,7 +13,10 @@ export async function SiteHeader() {
     <header className="border-b border-border/60 bg-background/80 backdrop-blur">
       <div className="container flex h-14 items-center justify-between">
         <div className="flex items-center gap-8">
-          <Link href="/" className="text-lg font-bold tracking-tight">
+          <Link
+            href="/"
+            className="font-display text-xl uppercase leading-none tracking-tight"
+          >
             PreMDB
           </Link>
           <nav className="hidden gap-6 text-sm text-muted-foreground md:flex">

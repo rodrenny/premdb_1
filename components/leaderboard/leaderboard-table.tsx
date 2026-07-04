@@ -1,10 +1,17 @@
 import type { LeaderboardEntry } from '@/types'
 
-export function LeaderboardTable({ entries }: { entries: LeaderboardEntry[] }) {
+export function LeaderboardTable({
+  entries,
+  currentUserId,
+}: {
+  entries: LeaderboardEntry[]
+  /** Highlights the viewer's own row when provided. */
+  currentUserId?: string | null
+}) {
   if (entries.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border/60 p-10 text-center text-sm text-muted-foreground">
-        No scores in this range yet.
+        No scores in this range yet — settled predictions land here.
       </div>
     )
   }
@@ -21,24 +28,46 @@ export function LeaderboardTable({ entries }: { entries: LeaderboardEntry[] }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-border/60">
-          {entries.map((e) => (
-            <tr key={e.user_id}>
-              <td className="px-4 py-3 font-medium">#{e.rank}</td>
-              <td className="px-4 py-3">
-                {e.username ? (
-                  <span className="font-medium">@{e.username}</span>
-                ) : (
-                  <span className="text-muted-foreground">Anonymous</span>
-                )}
-              </td>
-              <td className="px-4 py-3 text-right text-muted-foreground">
-                {e.settled_count}
-              </td>
-              <td className="px-4 py-3 text-right font-semibold text-primary">
-                {e.total_points}
-              </td>
-            </tr>
-          ))}
+          {entries.map((e) => {
+            const isViewer = currentUserId != null && e.user_id === currentUserId
+            const topThree = e.rank <= 3
+            return (
+              <tr
+                key={e.user_id}
+                className={isViewer ? 'bg-primary/10' : undefined}
+              >
+                <td
+                  className={`num px-4 py-3 ${
+                    topThree
+                      ? 'font-semibold text-primary'
+                      : 'text-muted-foreground'
+                  }`}
+                >
+                  {e.rank}
+                </td>
+                <td className="px-4 py-3">
+                  {e.username ? (
+                    <span className="font-medium">@{e.username}</span>
+                  ) : (
+                    <span className="text-muted-foreground">Anonymous</span>
+                  )}
+                  {isViewer ? (
+                    <span className="ml-2 text-xs text-primary">You</span>
+                  ) : null}
+                </td>
+                <td className="num px-4 py-3 text-right text-muted-foreground">
+                  {e.settled_count}
+                </td>
+                <td
+                  className={`num px-4 py-3 text-right font-semibold ${
+                    topThree ? 'text-primary' : 'text-foreground'
+                  }`}
+                >
+                  {e.total_points}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
