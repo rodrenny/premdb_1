@@ -12,6 +12,7 @@ import {
   recomputeScoreEvents,
   settleMovie,
 } from '@/lib/settlement/service'
+import { sendSettlementEmails } from '@/lib/email/settlement'
 
 export interface ActionResult {
   ok: boolean
@@ -134,6 +135,16 @@ export async function settleMovieAction(
   })
 
   if (!result.ok) return { ok: false, error: result.error }
+
+  // Fire-and-forget contract: settlement is committed at this point, and the
+  // email send is deliberately not awaited — it must never delay or fail this
+  // action's response. Errors are logged and dropped. Skipped for a repeat
+  // settle (idempotent no-op) so users get exactly one email per settlement.
+  if (!result.alreadySettled) {
+    void sendSettlementEmails(parsed.data.movieId).catch((e) =>
+      console.error('[settlement-email]', e),
+    )
+  }
 
   revalidatePath('/admin')
   revalidatePath('/leaderboard')

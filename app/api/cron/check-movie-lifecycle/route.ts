@@ -112,6 +112,8 @@ export async function GET(request: NextRequest) {
         tmdbCalls: snapshots.tmdbCalls,
         settledFromSnapshot: autoSettle.settledFromSnapshot,
         awaitingSnapshot: autoSettle.awaitingSnapshot,
+        emailsSent: autoSettle.emailsSent,
+        emailsFailed: autoSettle.emailsFailed,
         errors: [
           ...transitions.errors,
           ...snapshots.errors,

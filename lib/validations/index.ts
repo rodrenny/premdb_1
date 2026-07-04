@@ -13,6 +13,10 @@ export const usernameSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, 'Only letters, numbers and underscores'),
 })
 
+export const emailOptOutSchema = z.object({
+  emailOptOut: z.boolean(),
+})
+
 export const predictionSchema = z.object({
   movieId: z.uuid(),
   value: z
@@ -62,6 +66,7 @@ export const movieAdminSchema = z.object({
 
 export type EmailInput = z.infer<typeof emailSchema>
 export type UsernameInput = z.infer<typeof usernameSchema>
+export type EmailOptOutInput = z.infer<typeof emailOptOutSchema>
 export type PredictionInput = z.infer<typeof predictionSchema>
 export type SettlementInput = z.infer<typeof settlementSchema>
 export type MovieAdminInput = z.infer<typeof movieAdminSchema>

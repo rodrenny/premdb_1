@@ -145,6 +145,7 @@ supabase/
     012_admin_via_jwt.sql         admin_users + custom_access_token hook + is_admin()
     013_snapshot_rating_check.sql rating_snapshots rating 1.0-10.0 constraint
     014_drop_legacy_settle_movie_overload.sql  remove stale RPC overload
+    015_email_opt_out.sql         profiles.email_opt_out + column grant
   seed.sql              sample movies + settlement
 tests/
   unit/                 scoring, eligibility, utils, leaderboard, consensus (no DB)
@@ -163,7 +164,7 @@ vercel.json             cron schedule
 ```bash
 cp .env.local.example .env.local      # fill in real values (see below)
 npm ci --ignore-scripts
-# apply every file in supabase/migrations/ (001 through 014, in order)
+# apply every file in supabase/migrations/ (001 through 015, in order)
 # to your Supabase project
 npm run dev
 ```
@@ -172,7 +173,7 @@ The app is available at `http://localhost:3000`.
 
 ### Env vars
 
-All five are required for full functionality.
+The first five are required for full functionality.
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL="https://xxxx.supabase.co"
@@ -180,6 +181,10 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="sb_publishable_..."
 SUPABASE_SERVICE_ROLE_KEY="eyJ..."           # server-only, never ship to client
 TMDB_READ_ACCESS_TOKEN="eyJ..."               # v4 read access token
 CRON_SECRET="long-random-string"             # used by /api/cron/*
+
+# Optional — unset = settlement emails silently skipped
+RESEND_API_KEY="re_..."                       # Resend API key
+EMAIL_FROM="PreMDB <notifications@your-domain.com>"
 ```
 
 Admin access is not an env var: it is granted by inserting a user into the
@@ -192,6 +197,10 @@ Naming is intentional:
 - `SUPABASE_SERVICE_ROLE_KEY` is server-only; never import it from client code.
 - `CRON_SECRET` gates `/api/cron/check-movie-lifecycle`. Generate with
   `openssl rand -hex 32`.
+- `RESEND_API_KEY` / `EMAIL_FROM` are **optional**: without them, settlement
+  emails are skipped with a logged warning and everything else works
+  unchanged. They configure Resend only — auth magic links keep going
+  through Supabase and are unaffected.
 
 ### Supabase project
 
@@ -203,7 +212,7 @@ Naming is intentional:
    production URLs) under **Authentication → URL Configuration → Redirect URLs**.
 4. Apply migrations. Easiest path for a hosted project: open the **SQL Editor**
    and paste every file in `supabase/migrations/` **in numeric order**
-   (`001_initial.sql` … `013_snapshot_rating_check.sql`). Migrations are
+   (`001_initial.sql` … `015_email_opt_out.sql`). Migrations are
    forward-only: never edit an applied file; add a new numbered one instead.
 5. Enable the custom access token hook (see **Admin authorization** below) —
    migration `012` defines it but does not activate it.
@@ -428,7 +437,7 @@ Missing or wrong token returns **401**.
 curl -H "Authorization: Bearer $CRON_SECRET" \
   http://localhost:3000/api/cron/check-movie-lifecycle
 
-# → {"ok":true,"result":{"upcomingToWaiting":0,"waitingToAwaiting":0,"snapshotsInserted":0,"snapshotSkipped":0,"tmdbCalls":0,"settledFromSnapshot":0,"awaitingSnapshot":0,"errors":[]}}
+# → {"ok":true,"result":{"upcomingToWaiting":0,"waitingToAwaiting":0,"snapshotsInserted":0,"snapshotSkipped":0,"tmdbCalls":0,"settledFromSnapshot":0,"awaitingSnapshot":0,"emailsSent":0,"emailsFailed":0,"errors":[]}}
 ```
 
 ### Admin TMDb sync endpoint
@@ -440,6 +449,38 @@ curl -X POST https://your-domain.vercel.app/api/admin/tmdb-sync \
 
 Authorization is via the user's Supabase session — the handler calls
 `isAdmin()` and returns **403** otherwise.
+
+---
+
+## Settlement emails
+
+When a movie settles — manually via the admin console or by the cron
+auto-settle phase — every user who predicted it receives one email: the
+movie title, the official rating, their prediction, the points they earned,
+and their current all-time rank, with a link to `/dashboard`. That is the
+whole feature: one email, at one moment. No digests, reminders, or weekly
+summaries.
+
+- **Provider:** [Resend](https://resend.com). Set `RESEND_API_KEY` and
+  `EMAIL_FROM`; both are optional and, when unset, sends are skipped with a
+  single logged warning. Settlement itself never fails, blocks, or rolls
+  back because of email — sends are strictly fire-and-forget after the
+  `settle_movie` RPC succeeds.
+- **Opt-out:** the dashboard profile card has an "Email me when my
+  predictions settle" toggle (on by default), stored as
+  `profiles.email_opt_out` (migration 015). Users update it through their
+  own session; migration 015 extends the column-level UPDATE grant from
+  migration 011 to `(username, updated_at, email_opt_out)`.
+- **Observability:** the cron response includes `emailsSent` /
+  `emailsFailed` counters for the auto-settle phase.
+- **Code:** everything lives in the server-only module
+  `lib/email/settlement.ts` — never import it from client components. Auth
+  magic links are unrelated and still go through Supabase.
+
+Local smoke test: configure `RESEND_API_KEY` + `EMAIL_FROM` in `.env.local`,
+sign in with your own email, predict a seeded movie that is ready to settle,
+then settle it from `/admin` → Settlements. You should receive one email;
+settle again and you should not (repeat settlement is an idempotent no-op).
 
 ---
 
@@ -500,6 +541,9 @@ npm run test:watch # vitest watch mode
 - `tests/unit/range-since.test.ts` — UTC-explicit weekly/monthly cutoffs (B4).
 - `tests/unit/consensus.test.ts` — bucket/median math and the comparison
   text, mirroring the SQL aggregates.
+- `tests/unit/settlement-email.test.ts` — `buildRecipientList` (opt-out
+  filtering, dedupe, points/prediction/rank join) and the unconfigured-email
+  skip path of `sendSettlementEmails`.
 
 ### Integration tests (skip without live DB)
 
@@ -539,6 +583,9 @@ Coverage:
   leaves a day-20-only movie unsettled, is idempotent, the snapshot phase
   skips low-quality data, and a rating-0.0 snapshot insert is rejected by the
   DB constraint (B2).
+- `settlement-emails.test.ts` — settlement succeeds identically with no
+  `RESEND_API_KEY`, with a throwing email sender, and with a counting fake;
+  email counters land in the phase result.
 
 All files create and tear down their own users + movies via the service-role
 client. They never touch seed data.
@@ -549,8 +596,9 @@ client. They never touch seed data.
 
 1. `git push` the repo to GitHub / GitLab / Bitbucket.
 2. Import the repo in Vercel.
-3. Set the six env vars in **Project → Settings → Environment Variables**
-   (Production + Preview + Development).
+3. Set the five required env vars — plus `RESEND_API_KEY` / `EMAIL_FROM` if
+   you want settlement emails — in **Project → Settings → Environment
+   Variables** (Production + Preview + Development).
 4. Add your production URL — e.g. `https://premdb.example.com/auth/callback`
    — to Supabase **Authentication → URL Configuration → Redirect URLs**.
 5. Deploy. `vercel.json` registers the daily cron automatically.
@@ -633,9 +681,9 @@ Not in the current build, but kept in mind when drawing schema lines:
 - True IMDb ingestion — `rating_snapshots` already keys on
   `(movie_id, source, snapshot_date)` with `source in ('tmdb', 'imdb')`, so
   an IMDb feed can land beside the TMDb proxy without schema changes.
-- Settlement email notifications — explicitly deferred from v9; no email
-  provider, email code, or `RESEND_API_KEY` exists in this build and nothing
-  may depend on it yet.
+- ~~Settlement email notifications~~ — shipped (deferred from v9, built in
+  this release; see "Settlement emails"). Digests, lock reminders, and any
+  other email remain out of scope.
 - Seasons / rounds — would add a `seasons` table and `movies.season_id`.
   Leaderboard would filter on season; current weekly/monthly tiles remain as
   sub-filters.
